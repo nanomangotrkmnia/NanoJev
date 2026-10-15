@@ -57,6 +57,37 @@ describe("TypesafeJevProvider", () => {
     expect((result.answer as { choice: string }).choice).toBe("attack_target");
   });
 
+  it("sends large states uncompressed so compression-free endpoints accept them", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return jsonResponse({
+        model: "openjev-0.1",
+        answers: {
+          next_action: { type: "choice", choice: "hold_position", probabilities: { hold_position: 1 }, confidence: 1 },
+        },
+        usage: { input_tokens: 4000, output_tokens: 1 },
+      });
+    }) as unknown as typeof fetch;
+
+    const provider = new TypesafeJevProvider({
+      apiKey: "k",
+      baseUrl: "https://api.example.test",
+      model: "openjev-latest",
+      timeoutMs: 1000,
+      maxRetries: 0,
+      fetchImpl,
+    });
+
+    // Bodies >= 1 KiB are the ones the SDK would otherwise zstd-compress.
+    const bigState = { blob: "x".repeat(4000) };
+    await provider.decide({ state: bigState, choice: baseChoice, model: "openjev-latest" });
+
+    const headers = new Headers(calls[0]!.init.headers);
+    expect(headers.get("content-encoding")).toBeNull();
+    expect(JSON.parse(String(calls[0]!.init.body)).state).toEqual(bigState);
+  });
+
   it("maps 401 to an auth failure without retrying", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ detail: { error_type: "auth", message: "bad key" } }, 401)) as unknown as typeof fetch;
     const provider = new TypesafeJevProvider({

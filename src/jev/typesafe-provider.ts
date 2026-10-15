@@ -75,6 +75,10 @@ export class TypesafeJevProvider implements JevProvider {
       timeout: options.timeoutMs,
       retry: { maxRetries: options.maxRetries },
       logLevel: "off",
+      // The SDK zstd-compresses request bodies >= 1 KiB by default. Hosted OpenJev
+      // (Codiv) rejects those with `422 ... JSON decode error`, and combat observations
+      // are well over 1 KiB, so send every body uncompressed.
+      compression: false,
       fetch: options.fetchImpl,
     });
   }
