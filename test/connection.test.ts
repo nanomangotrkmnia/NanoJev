@@ -6,14 +6,31 @@ import { MinecraftConnection, type ConnectionEvents } from "../src/minecraft/con
 
 const logger = createLogger({ level: "error", sink: () => {} });
 
+interface RawWrite {
+  name: string;
+  params: Record<string, unknown>;
+}
+
 interface FakeEmitter {
   bot: Bot;
+  writes: RawWrite[];
+  clientState: string | undefined;
   emit(event: string, ...args: unknown[]): void;
 }
 
 function fakeBotFactory(): FakeEmitter {
   const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
+  const writes: RawWrite[] = [];
+  const rawClient = {
+    state: undefined as string | undefined,
+    write(name: string, params: Record<string, unknown>) {
+      writes.push({ name, params });
+      return undefined;
+    },
+  };
+  const client = { _client: rawClient };
   const bot = {
+    ...client,
     on(event: string, listener: (...args: unknown[]) => void) {
       (listeners[event] ??= []).push(listener);
       return bot;
@@ -36,6 +53,13 @@ function fakeBotFactory(): FakeEmitter {
   };
   return {
     bot: bot as unknown as Bot,
+    writes,
+    get clientState() {
+      return rawClient.state;
+    },
+    set clientState(value) {
+      rawClient.state = value;
+    },
     emit(event, ...args) {
       for (const listener of [...(listeners[event] ?? [])]) listener(...args);
     },
@@ -62,6 +86,39 @@ describe("MinecraftConnection lifecycle", () => {
     emitter.emit("spawn");
     expect(spawned).toBe(true);
     expect(connection.connected).toBe(true);
+    connection.stop();
+  });
+});
+
+describe("MinecraftConnection resource pack handshake", () => {
+  const UUID = "50cc5728-af04-38a7-933c-c14948d8102c";
+
+  it("answers a required configuration-phase pack with the ASCII uuid", () => {
+    const { connection, emitter } = makeConnection({});
+    emitter.clientState = "configuration";
+    emitter.emit("resourcePack", "https://example.com/pack.zip", UUID);
+
+    expect(emitter.writes).toEqual([
+      { name: "resource_pack_receive", params: { uuid: UUID, result: 3 } },
+      { name: "resource_pack_receive", params: { uuid: UUID, result: 0 } },
+    ]);
+    connection.stop();
+  });
+
+  it("serializes a uuid-1345-style object to its ASCII form", () => {
+    const { connection, emitter } = makeConnection({});
+    emitter.clientState = "configuration";
+    emitter.emit("resourcePack", "https://example.com/pack.zip", { toString: () => UUID });
+
+    expect(emitter.writes.map((write) => write.params.uuid)).toEqual([UUID, UUID]);
+    connection.stop();
+  });
+
+  it("does not write a pack response outside the configuration phase", () => {
+    const { connection, emitter } = makeConnection({});
+    emitter.clientState = "play";
+    emitter.emit("resourcePack", "https://example.com/pack.zip", UUID);
+    expect(emitter.writes).toHaveLength(0);
     connection.stop();
   });
 });

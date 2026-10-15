@@ -162,11 +162,19 @@ Commands:
 nanojev                 # connect the bot and start the combat loop
 nanojev run             # same as the default
 nanojev setup           # interactive configuration, writes .env
+nanojev settings        # edit .env interactively (basic and advanced menus)
 nanojev models          # list OpenJev models with hardware and ease-of-run
 nanojev openjev         # start the local OpenJev server (add --execute to actually run it)
 nanojev codiv           # how to use Codiv's hosted OpenJev, plus a reachability check
 nanojev help
 ```
+
+On Windows, `settings.bat` opens the same editor, so you can change the backend, keys, server
+address, username, target, timing, and techniques without running full setup again. On any platform
+`npm run settings` does the same thing. It splits the options into a basic menu (backend, API key,
+model, server, username, auth, target) and an advanced menu (OpenJev endpoint, targeting,
+connection and reconnect, decision timing, loop and attack tuning, techniques, log level), and
+writes whatever you change back to `.env`.
 
 On startup NanoJev prints one line with the server, bot username, auth mode, Minecraft version
 support, target mode, loop settings, and the decision provider (model and endpoint, never the key).

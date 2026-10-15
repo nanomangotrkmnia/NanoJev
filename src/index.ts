@@ -8,6 +8,7 @@ import { TargetSelector } from "./target.js";
 import { CombatExecutor } from "./combat/executor.js";
 import { CombatEngine } from "./combat/engine.js";
 import { runSetup } from "./cli/setup.js";
+import { runSettings } from "./cli/settings.js";
 import { printModelCatalog, runCodivInfo, runOpenJev } from "./cli/openjev-run.js";
 
 const HELP = `NanoJev - autonomous Minecraft PvP bot driven by Jev / OpenJev decisions
@@ -16,6 +17,7 @@ Usage:
   nanojev                 Connect the bot and start the combat loop (default)
   nanojev run             Same as the default
   nanojev setup           Interactive first-run configuration (writes .env)
+  nanojev settings        Edit .env interactively (basic / advanced)
   nanojev models          List OpenJev models with hardware and ease-of-run
   nanojev openjev         Start the local OpenJev decision server (add --execute to run)
   nanojev codiv           Show how to use Codiv's hosted OpenJev (api.codiv.ai) and check reachability
@@ -176,6 +178,8 @@ async function dispatch(argv: string[]): Promise<number> {
       return 0;
     case "setup":
       return runSetup({ force: argv.includes("--force") });
+    case "settings":
+      return runSettings();
     case "models":
       printModelCatalog();
       return 0;

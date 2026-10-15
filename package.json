@@ -15,6 +15,7 @@
     "start": "node dist/index.js run",
     "dev": "tsx src/index.ts run",
     "setup": "tsx src/index.ts setup",
+    "settings": "tsx src/index.ts settings",
     "models": "tsx src/index.ts models",
     "openjev": "tsx src/index.ts openjev",
     "codiv": "tsx src/index.ts codiv",

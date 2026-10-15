@@ -46,6 +46,27 @@ const FATAL_KICK_PATTERNS = [
   "you do not have permission",
 ];
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Values of the `resource_pack_receive` result field (see mineflayer/protocol).
+const RESOURCE_PACK_ACCEPTED = 3;
+const RESOURCE_PACK_SUCCESSFULLY_LOADED = 0;
+
+/**
+ * Extracts the ASCII UUID a resource-pack event carries.
+ *
+ * Mineflayer emits the pack id sometimes as a string (protocol-parsed) and sometimes
+ * wrapped in a `uuid-1345` object; the protocol only serializes the string form.
+ */
+function resourcePackUuid(value: unknown): string | null {
+  if (typeof value === "string") return UUID_PATTERN.test(value) ? value : null;
+  if (value !== null && typeof value === "object") {
+    const text = String(value);
+    return UUID_PATTERN.test(text) ? text : null;
+  }
+  return null;
+}
+
 function looksLikeAuthFailure(message: string): boolean {
   const lower = message.toLowerCase();
   return AUTH_FAILURE_PATTERNS.some((pattern) => lower.includes(pattern));
@@ -153,6 +174,13 @@ export class MinecraftConnection {
       this.events.onSpawn?.(bot as unknown as BotLike);
     });
 
+    // Servers may request a resource pack while the client is still in the configuration
+    // phase (required/forced packs) and will not finish the login until it is answered.
+    // Mineflayer's built-in auto-accept sends the pack UUID as an object, which the
+    // protocol encodes as 16 zero bytes; the server ignores that reply and the bot hangs
+    // until the connect timeout. Replying with the ASCII UUID lets the login complete.
+    (bot as unknown as BotLike).on("resourcePack", (...args: unknown[]) => this.answerResourcePack(bot, args));
+
     bot.on("respawn", () => {
       this.logger.info("bot respawned");
       this.events.onRespawn?.(bot as unknown as BotLike);
@@ -197,6 +225,21 @@ export class MinecraftConnection {
     bot.once("end", (reason: string) => {
       this.onEnd(reason);
     });
+  }
+
+  private answerResourcePack(bot: Bot, args: unknown[]): void {
+    const client = (bot as unknown as {
+      _client?: { state?: string; write?: (name: string, params: unknown) => unknown };
+    })._client;
+    if (!client || client.state !== "configuration" || typeof client.write !== "function") return;
+
+    const uuid = args
+      .map((arg) => resourcePackUuid(arg))
+      .find((value): value is string => value !== null);
+    if (!uuid) return;
+
+    client.write("resource_pack_receive", { uuid, result: RESOURCE_PACK_ACCEPTED });
+    client.write("resource_pack_receive", { uuid, result: RESOURCE_PACK_SUCCESSFULLY_LOADED });
   }
 
   private onConnectTimeout(): void {
