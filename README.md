@@ -137,6 +137,9 @@ Key settings (see `.env.example` for the full list):
 | `NANOJEV_ATTACK_RANGE` | Melee reach in blocks, hard-capped at vanilla (3) | `3` |
 | `NANOJEV_WTAP_ENABLED` | Offer a W-tap (sprint reset) as a selectable action | `true` |
 | `NANOJEV_WTAP_RELEASE_TICKS` | Ticks to hold the W-tap release phase (1 tick = 50 ms) | `2` |
+| `NANOJEV_HITSELECT_ENABLED` | Offer hitselect (save the hit, then jump-crit) | `true` |
+| `NANOJEV_HITSELECT_TICKS` | Ticks to hold the hit before the crit (1–3) | `2` |
+| `NANOJEV_JUMP_RESET_ENABLED` | Offer jump reset (jump to reset sprint, then hit) | `true` |
 | `NANOJEV_ON_JEV_FAILURE` | `halt` (default) or `hold` | `halt` |
 | `NANOJEV_LOG_LEVEL` | `debug`, `info`, `warn`, `error` | `info` |
 
@@ -241,15 +244,17 @@ requested at all.
 The model chooses from only the actions valid in the current state:
 
 `approach`, `close_distance_sprinting`, `strafe_left`, `strafe_right`, `retreat`, `hold_position`,
-`track_target`, `attack_target`, `jump_attack`, `sprint_reset_attack`, `raise_shield`, `reposition`.
+`track_target`, `attack_target`, `jump_attack`, `sprint_reset_attack`, `hitselect`, `jump_reset`,
+`raise_shield`, `reposition`.
 
 Rules enforced in code:
 
-- `attack_target`, `jump_attack`, and `sprint_reset_attack` are offered only with a valid in-range
-  target **and** when the attack is off cooldown; `jump_attack` only when grounded; the W-tap only
-  when there is room to move.
-- `sprint_reset_attack` (W-tap) is offered **alongside** the normal attack, so the model chooses
-  whether to W-tap or just hit. Disable it entirely with `NANOJEV_WTAP_ENABLED=false`.
+- `attack_target`, `jump_attack`, `sprint_reset_attack`, `hitselect`, and `jump_reset` are offered
+  only with a valid in-range target **and** when the attack is off cooldown; the jump-based ones
+  (`jump_attack`, `hitselect`, `jump_reset`) and the W-tap only when grounded and with room to move.
+- The techniques are offered **alongside** the normal attack, so the model chooses whether to just
+  hit or to set up a W-tap / hitselect / jump reset. Disable each with `NANOJEV_WTAP_ENABLED`,
+  `NANOJEV_HITSELECT_ENABLED`, `NANOJEV_JUMP_RESET_ENABLED`.
 - Movement actions are withheld when the adjacent space is blocked (no open directions).
 - `raise_shield` is offered only when a shield is actually available.
 - Each option carries a description of its tactical effect, constraints, and trade-offs.
@@ -263,6 +268,30 @@ rather than a constant input. Because Minecraft runs at 20 ticks/second, timing 
 reliable than a single tick, where the server may not observe the released state). The knockback
 benefit is **server/version dependent and not guaranteed** — it is treated as an approximation,
 like the attack cooldown.
+
+### Hitselect (delayed crit)
+
+`hitselect` deliberately *saves* the hit for `NANOJEV_HITSELECT_TICKS` (1–3 ticks), then jumps and
+attacks **while airborne and falling** — the critical-hit condition. The bot reads its real
+`onGround` and vertical velocity (`entity.velocity.y < 0`) to gate the swing, so the crit attempt
+only fires when the crit is actually possible; if it never becomes possible within the window it
+attacks nothing and moves on. Critical hits do markedly more damage in versions that have them,
+and the window/values are version dependent, so this is labelled an approximation. The trade-off:
+delaying risks eating the opponent's hit first.
+
+### Jump reset
+
+`jump_reset` jumps **on the same tick as the hit** to cancel/reduce the knockback taken, keeping
+the attack on schedule and momentum intact. As with the other techniques, the knockback reduction
+is server/version dependent and not guaranteed.
+
+### Multi-tick techniques are committed
+
+All three techniques are played as timelines advanced one phase per tick. A decision that arrives
+while a technique is mid-sequence is **ignored for that action** (the sequence continues); the
+technique only restarts when a different action is chosen, or the same action is chosen again after
+the previous sequence finished. This keeps a "hold for 1–3 ticks, then crit" from being reset every
+decision interval.
 
 Movement controls are released when an action ends, the target disappears, the bot disconnects,
 or NanoJev shuts down. Conflicting action routines cannot drive the bot at the same time.
@@ -341,6 +370,7 @@ throughput, printed every 30 seconds.
 ```bash
 npm test          # vitest run
 npm run typecheck # tsc --noEmit
+npm run bench     # tick-loop micro-benchmark (dev tool)
 ```
 
 Tests cover configuration validation, observation construction, angle normalization, target
@@ -349,6 +379,14 @@ rejection of un-offered actions, mocked Mineflayer execution, stale-response rej
 and outages, and disconnect/shutdown cleanup. They use a fake bot and a scripted provider and
 require **neither** a paid API call nor a live server. The live provider is exercised against a
 mocked `fetch` so the real SDK wire format and error classes are tested.
+
+### Benchmarks
+
+`npm run bench` measures the per-tick CPU cost of the hot-path pieces (observation sampling with
+cold/warm caches, legal-action building, the state signatures, action execution, and aim math) and
+prints each as a share of the tick budget. It touches no network or server and exists to catch
+performance regressions. It typically reports well under 1% of the tick budget for NanoJev's own
+code — the rest is Mineflayer and network I/O.
 
 ## Supported Minecraft versions
 

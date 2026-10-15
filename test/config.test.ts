@@ -95,6 +95,11 @@ describe("loadConfig", () => {
       expect((error as ConfigError).issues.length).toBeGreaterThanOrEqual(2);
     }
   });
+
+  it("bounds the hitselect hold to 1-3 ticks", () => {
+    expect(() => loadConfig({ env: { NANOJEV_HITSELECT_TICKS: "5" } })).toThrow(ConfigError);
+    expect(loadConfig({ env: { NANOJEV_HITSELECT_TICKS: "3" } }).combat.hitselectTicks).toBe(3);
+  });
 });
 
 describe("Jev configuration status", () => {

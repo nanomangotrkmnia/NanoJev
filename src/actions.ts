@@ -41,6 +41,15 @@ export const ACTION_DESCRIPTIONS: Record<CombatActionId, Descriptor> = {
     `W-tap: stop moving and sprinting for one short beat, land a single hit at ~${obs.target?.distance ?? "?"} blocks ` +
     `while not sprinting, then re-engage a fresh sprint. A sprint reset can add knockback and help chain hits, but it ` +
     `gives up a beat of forward pressure and the effect is server/version dependent (not guaranteed).`,
+  hitselect: (obs, config) =>
+    `Hitselect: hold the attack for ~${config.combat.hitselectTicks} tick(s) instead of swinging now, then jump and crit ` +
+    `(attack while airborne and falling) at ~${obs.target?.distance ?? "?"} blocks. Critical hits do markedly more damage ` +
+    `in versions that have them, but the delay risks eating the opponent's hit first, and crit timing is version-dependent ` +
+    `and not guaranteed.`,
+  jump_reset: (obs) =>
+    `Jump reset: jump on the same tick as the hit at ~${obs.target?.distance ?? "?"} blocks to cancel/reduce the knockback ` +
+    `you take. Keeps the attack on schedule and your momentum intact, but commits to a jump; the knockback reduction is ` +
+    `server/version dependent (not guaranteed).`,
   raise_shield: () =>
     `Equip and raise the shield in the off-hand to block incoming melee and projectiles. ` +
     `Strong defense, but movement slows while blocking and attacks cannot be made in the same interval.`,
@@ -52,7 +61,9 @@ export const ACTION_DESCRIPTIONS: Record<CombatActionId, Descriptor> = {
 const ORDER: CombatActionId[] = [
   "attack_target",
   "sprint_reset_attack",
+  "hitselect",
   "jump_attack",
+  "jump_reset",
   "approach",
   "close_distance_sprinting",
   "strafe_left",
@@ -97,6 +108,8 @@ export function buildLegalActions(obs: Observation, config: Config): LegalAction
     actions.add("attack_target");
     if (obs.self.onGround) actions.add("jump_attack");
     if (config.combat.wtapEnabled && canMove) actions.add("sprint_reset_attack");
+    if (config.combat.hitselectEnabled && canMove && obs.self.onGround) actions.add("hitselect");
+    if (config.combat.jumpResetEnabled && canMove && obs.self.onGround) actions.add("jump_reset");
   }
 
   if (obs.self.shieldAvailable) actions.add("raise_shield");
@@ -160,5 +173,7 @@ export function legalActionsSignature(obs: Observation, config: Config): string 
     obs.environment.openDirectionCount > 0 ? "o" : "b",
     lowHealth ? "l" : "-",
     config.combat.wtapEnabled ? "w" : "-",
+    config.combat.hitselectEnabled ? "h" : "-",
+    config.combat.jumpResetEnabled ? "j" : "-",
   ].join("|");
 }

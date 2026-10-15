@@ -196,6 +196,9 @@ export const configSchema = z
       materialDistanceBucket: numberFromEnv(1, { min: 0.1, max: 16 }),
       wtapEnabled: boolFromEnv(true),
       wtapReleaseTicks: numberFromEnv(2, { int: true, min: 1, max: 10 }),
+      hitselectEnabled: boolFromEnv(true),
+      hitselectTicks: numberFromEnv(2, { int: true, min: 1, max: 3 }),
+      jumpResetEnabled: boolFromEnv(true),
     }),
   });
 
@@ -267,6 +270,9 @@ export function loadConfig(options: LoadOptions = {}): Config {
       materialDistanceBucket: env.NANOJEV_MATERIAL_DISTANCE_BUCKET,
       wtapEnabled: env.NANOJEV_WTAP_ENABLED,
       wtapReleaseTicks: env.NANOJEV_WTAP_RELEASE_TICKS,
+      hitselectEnabled: env.NANOJEV_HITSELECT_ENABLED,
+      hitselectTicks: env.NANOJEV_HITSELECT_TICKS,
+      jumpResetEnabled: env.NANOJEV_JUMP_RESET_ENABLED,
     },
   };
 

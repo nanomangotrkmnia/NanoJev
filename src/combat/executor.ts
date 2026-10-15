@@ -21,6 +21,8 @@ interface ExecPhase {
   ticks: number;
   controls: Controls;
   attack?: boolean;
+  /** Only swing this phase while airborne and falling (a critical-hit attempt). */
+  attackWhenFalling?: boolean;
 }
 
 /** The steady controls an action holds once its special phases are done. */
@@ -35,29 +37,34 @@ const CRUISE: Record<CombatActionId, Controls> = {
   track_target: {},
   attack_target: {},
   jump_attack: { forward: true },
-  raise_shield: {},
   sprint_reset_attack: { forward: true, sprint: true },
+  hitselect: { forward: true, sprint: true },
+  jump_reset: { forward: true, sprint: true },
+  raise_shield: {},
 };
 
 export class CombatExecutor {
   private readonly bot: BotLike;
   private readonly logger: Logger;
   private readonly attackRange: number;
-  private readonly wtapReleaseTicks: number;
   private readonly timelines: Record<CombatActionId, ExecPhase[]>;
   private shieldActive = false;
   private shieldItem: Item | null = null;
   private controls: ControlState[] = [];
+  private currentActionId: CombatActionId | null = null;
   private phaseIndex = 0;
   private ticksInPhase = 0;
+  private finished = false;
 
   constructor(bot: BotLike, config: Config, logger: Logger) {
     this.bot = bot;
     this.logger = logger;
     // Never exceed normal melee reach, whatever the configuration says.
     this.attackRange = Math.min(config.combat.attackRange, VANILLA_ATTACK_REACH);
-    this.wtapReleaseTicks = Math.max(1, Math.round(config.combat.wtapReleaseTicks));
-    this.timelines = buildTimelines(this.wtapReleaseTicks);
+    this.timelines = buildTimelines(
+      Math.max(1, Math.round(config.combat.wtapReleaseTicks)),
+      Math.min(3, Math.max(1, Math.round(config.combat.hitselectTicks))),
+    );
   }
 
   get activeControls(): ControlState[] {
@@ -73,9 +80,13 @@ export class CombatExecutor {
   }
 
   /**
-   * Executes one tick of the current action. Actions are played as short timelines of control
-   * phases (so a W-tap can release `forward`+`sprint`, hit, then re-engage), advanced one phase
-   * per call. `attackReady` gates whether a phase tagged `attack` may swing this tick.
+   * Executes one tick of the current action. Multi-tick techniques (W-tap, hitselect, jump reset)
+   * are played as timelines of control phases advanced one phase per call.
+   *
+   * A sequence restarts only when a *different* action is requested, or the same action is
+   * re-requested after the previous sequence finished; a re-request mid-sequence continues it, so
+   * a decision that arrives while a technique is running cannot interrupt it. `attackReady` gates
+   * whether an attack phase may swing this tick.
    */
   async applyAction(
     action: CombatActionId,
@@ -83,10 +94,13 @@ export class CombatExecutor {
     isNew: boolean,
     attackReady: boolean,
   ): Promise<ActionExecutionResult> {
-    if (isNew) {
+    const isSame = action === this.currentActionId;
+    if (!isSame || (isNew && this.finished)) {
       this.phaseIndex = 0;
       this.ticksInPhase = 0;
+      this.finished = false;
     }
+    this.currentActionId = action;
 
     const timeline = this.timelines[action];
     if (this.phaseIndex >= timeline.length) this.phaseIndex = timeline.length - 1;
@@ -97,19 +111,32 @@ export class CombatExecutor {
 
     let attacked = false;
     if (phase.attack && attackReady && target && target.isValid !== false) {
-      if (target.position.distanceTo(this.bot.entity.position) <= this.attackRange) {
+      const inRange = target.position.distanceTo(this.bot.entity.position) <= this.attackRange;
+      const critReady = !phase.attackWhenFalling || this.isFalling();
+      if (inRange && critReady) {
         this.bot.attack(target);
         attacked = true;
       }
     }
 
     this.ticksInPhase += 1;
-    if (this.ticksInPhase >= phase.ticks && this.phaseIndex < timeline.length - 1) {
-      this.phaseIndex += 1;
-      this.ticksInPhase = 0;
+    if (this.ticksInPhase >= phase.ticks) {
+      if (this.phaseIndex < timeline.length - 1) {
+        this.phaseIndex += 1;
+        this.ticksInPhase = 0;
+      } else {
+        this.finished = true;
+      }
     }
 
     return { attacked, controls: this.controls };
+  }
+
+  private isFalling(): boolean {
+    const entity = this.bot.entity;
+    if (entity.onGround) return false;
+    const velocityY = entity.velocity?.y ?? 0;
+    return velocityY < 0;
   }
 
   private setControls(desired: Controls): void {
@@ -184,8 +211,10 @@ export class CombatExecutor {
       }
     }
     this.controls = [];
+    this.currentActionId = null;
     this.phaseIndex = 0;
     this.ticksInPhase = 0;
+    this.finished = false;
   }
 }
 
@@ -194,11 +223,12 @@ function desiredControls(desired: Controls): ControlState[] {
 }
 
 /** Precomputes every action timeline once, so the tick loop never allocates phases. */
-function buildTimelines(wtapReleaseTicks: number): Record<CombatActionId, ExecPhase[]> {
+function buildTimelines(wtapReleaseTicks: number, hitselectTicks: number): Record<CombatActionId, ExecPhase[]> {
   const timelines = {} as Record<CombatActionId, ExecPhase[]>;
   for (const action of Object.keys(CRUISE) as CombatActionId[]) {
     timelines[action] = [{ ticks: 1, controls: { ...CRUISE[action] } }];
   }
+
   timelines.attack_target = [
     { ticks: 1, controls: {}, attack: true },
     { ticks: 1, controls: {} },
@@ -211,5 +241,18 @@ function buildTimelines(wtapReleaseTicks: number): Record<CombatActionId, ExecPh
     { ticks: wtapReleaseTicks, controls: {}, attack: true },
     { ticks: 1, controls: { ...CRUISE.sprint_reset_attack } },
   ];
+  // Hitselect: hold the hit for a beat, jump, then crit on the way down.
+  timelines.hitselect = [
+    { ticks: hitselectTicks, controls: {} },
+    { ticks: 1, controls: { jump: true } },
+    { ticks: 12, controls: {}, attack: true, attackWhenFalling: true },
+    { ticks: 1, controls: { ...CRUISE.hitselect } },
+  ];
+  // Jump reset: jump on the same tick as the hit, to cancel/reduce the knockback taken.
+  timelines.jump_reset = [
+    { ticks: 1, controls: { ...CRUISE.jump_reset, jump: true }, attack: true },
+    { ticks: 1, controls: { ...CRUISE.jump_reset } },
+  ];
+
   return timelines;
 }

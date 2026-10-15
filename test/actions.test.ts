@@ -54,6 +54,26 @@ describe("buildLegalActions", () => {
     expect(result).not.toContain("sprint_reset_attack");
   });
 
+  it("offers hitselect and jump reset when grounded and in melee range", () => {
+    const result = ids(makeObservation({ target: makeTarget({ distance: 2 }), self: makeSelf({ attackReady: true, onGround: true }) }));
+    expect(result).toContain("hitselect");
+    expect(result).toContain("jump_reset");
+  });
+
+  it("withholds jump-based techniques while airborne", () => {
+    const result = ids(makeObservation({ target: makeTarget({ distance: 2 }), self: makeSelf({ attackReady: true, onGround: false }) }));
+    expect(result).not.toContain("hitselect");
+    expect(result).not.toContain("jump_reset");
+  });
+
+  it("honors the technique toggles", () => {
+    const disabled = loadConfig({ env: { NANOJEV_HITSELECT_ENABLED: "false", NANOJEV_JUMP_RESET_ENABLED: "false" } });
+    const result = buildLegalActions(makeObservation({ target: makeTarget({ distance: 2 }) }), disabled).map((a) => a.id);
+    expect(result).not.toContain("hitselect");
+    expect(result).not.toContain("jump_reset");
+    expect(result).toContain("attack_target");
+  });
+
   it("withholds attack actions while the attack is on cooldown", () => {
     const result = ids(makeObservation({ target: makeTarget({ distance: 2 }), self: makeSelf({ attackReady: false }) }));
     expect(result).not.toContain("attack_target");

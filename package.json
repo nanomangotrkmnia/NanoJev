@@ -21,7 +21,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bench": "tsx bench/tick-bench.ts"
   },
   "dependencies": {
     "@typesafe-ai/sdk": "^0.7.0",

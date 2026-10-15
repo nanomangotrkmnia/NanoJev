@@ -123,6 +123,58 @@ describe("CombatExecutor W-tap (sprint reset)", () => {
   });
 });
 
+describe("CombatExecutor hitselect and jump reset", () => {
+  it("hitselect holds the hit, then crits only while airborne and falling", async () => {
+    const fake = createFakeBot({ onGround: true, target: { username: "Steve", position: [2, 0, 0] } });
+    const executor = makeExecutor(fake, { NANOJEV_HITSELECT_TICKS: "1" });
+    const target = fake.targetEntity();
+
+    await executor.applyAction("hitselect", target, true, true);
+    expect(fake.calls.attacks).toHaveLength(0);
+
+    await executor.applyAction("hitselect", target, false, true);
+    expect(lastControlMap(fake).jump).toBe(true);
+    expect(fake.calls.attacks).toHaveLength(0);
+
+    await executor.applyAction("hitselect", target, false, true);
+    expect(fake.calls.attacks).toHaveLength(0);
+
+    fake.bot.entity.onGround = false;
+    fake.bot.entity.velocity.y = -0.3;
+    await executor.applyAction("hitselect", target, false, true);
+    expect(fake.calls.attacks).toHaveLength(1);
+  });
+
+  it("does not restart an in-progress technique when the same action is re-requested", async () => {
+    const fake = createFakeBot({ onGround: true, target: { username: "Steve", position: [2, 0, 0] } });
+    const executor = makeExecutor(fake, { NANOJEV_HITSELECT_TICKS: "3" });
+    const target = fake.targetEntity();
+
+    // Three ticks of the hold phase, all requested as "new" (as a fresh decision would).
+    await executor.applyAction("hitselect", target, true, true);
+    await executor.applyAction("hitselect", target, true, true);
+    await executor.applyAction("hitselect", target, true, true);
+    // The sequence continued instead of restarting, so it has reached the jump phase.
+    await executor.applyAction("hitselect", target, false, true);
+    expect(lastControlMap(fake).jump).toBe(true);
+  });
+
+  it("jump reset jumps on the same tick as the hit", async () => {
+    const fake = createFakeBot({ onGround: true, target: { username: "Steve", position: [2, 0, 0] } });
+    const executor = makeExecutor(fake);
+    const target = fake.targetEntity();
+
+    await executor.applyAction("jump_reset", target, true, true);
+    const controls = lastControlMap(fake);
+    expect(controls.jump).toBe(true);
+    expect(fake.calls.attacks).toHaveLength(1);
+
+    await executor.applyAction("jump_reset", target, false, false);
+    expect(lastControlMap(fake).jump).toBe(false);
+    expect(fake.calls.attacks).toHaveLength(1);
+  });
+});
+
 describe("CombatExecutor shield", () => {
   it("equips and raises the shield when available", async () => {
     const fake = createFakeBot({ items: [{ name: "shield" }] });
@@ -182,6 +234,8 @@ describe("CombatExecutor lifecycle", () => {
       "attack_target",
       "jump_attack",
       "sprint_reset_attack",
+      "hitselect",
+      "jump_reset",
       "raise_shield",
       "reposition",
     ];

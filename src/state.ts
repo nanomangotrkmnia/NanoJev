@@ -9,6 +9,8 @@ export type CombatActionId =
   | "attack_target"
   | "jump_attack"
   | "sprint_reset_attack"
+  | "hitselect"
+  | "jump_reset"
   | "raise_shield"
   | "reposition";
 
