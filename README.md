@@ -7,9 +7,6 @@ short list to a System One decision model: TypeSafe's Jev, or the open-source Op
 picks one. What is legal, whether the answer is valid, and how the move is carried out are all
 decided in code.
 
-The model never drives the bot directly. It gets one multiple-choice question and returns one
-choice.
-
 ---
 
 ## Contents
@@ -117,7 +114,7 @@ nanojev setup        # npm run setup
 
 `start.bat` runs setup by itself the first time, when there is no `.env`.
 
-The settings you are most likely to touch:
+Common settings:
 
 | Variable | Meaning | Default |
 |---|---|---|
@@ -146,8 +143,7 @@ The settings you are most likely to touch:
 | `NANOJEV_ON_JEV_FAILURE` | `halt` or `hold` | `halt` |
 | `NANOJEV_LOG_LEVEL` | `debug`, `info`, `warn`, `error` | `info` |
 
-`.env.example` has the complete list. Keys are never written to the log; the logger redacts
-anything that looks like a credential.
+`.env.example` has the complete list. 
 
 ## Run
 
