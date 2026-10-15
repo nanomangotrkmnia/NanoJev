@@ -1,11 +1,17 @@
 import type { Bot } from "mineflayer";
 
-interface Velocity {
+interface Vec3Like {
+  x: number;
+  y: number;
+  z: number;
+  clone(): Vec3Like;
+  distanceTo(other: Vec3Like): number;
   set(x: number, y: number, z: number): unknown;
 }
 
 interface EntityWithVelocity {
-  velocity?: Velocity;
+  position?: Vec3Like;
+  velocity?: Vec3Like;
 }
 
 interface EntityVelocityPacket {
@@ -15,7 +21,10 @@ interface EntityVelocityPacket {
 
 interface RawClient {
   on(event: string, listener: (...args: unknown[]) => void): unknown;
+  prependListener?(event: string, listener: (...args: unknown[]) => void): unknown;
 }
+
+const NO_OP_POSITION_EPSILON = 1e-3;
 
 /**
  * True when the server encodes entity velocity with the quantized `lpVec3` type.
@@ -36,19 +45,27 @@ export function usesLpVec3Velocity(version: string): boolean {
 /**
  * Restores knockback on Minecraft 1.21.9+.
  *
- * From 1.21.9 the `entity_velocity` packet uses the quantized `lpVec3` type, whose values are
- * already in blocks per tick. Mineflayer still passes them through `fromNotchVelocity` (÷ 8000),
- * so a server knockback of, say, -0.39 blocks/tick becomes ~-0.00005 and the physics tick discards
- * it as negligible: the bot slides nowhere and appears immune to knockback.
+ * Two Mineflayer behaviours rob the bot of knockback on these versions:
  *
- * This only reads the packet the server already sent and writes the velocity it contains onto the
- * entity, exactly as a stock client applies it. It sends nothing and never invents motion.
+ * 1. The `entity_velocity` packet now uses the quantized `lpVec3` type, whose values are already
+ *    in blocks per tick. Mineflayer still passes them through `fromNotchVelocity` (÷ 8000), so a
+ *    knockback of, say, -0.39 becomes ~-0.00005 and the physics tick discards it as negligible.
+ * 2. Servers (and anti-cheat plugins) that re-send the player's current position every tick make
+ *    Mineflayer treat each packet as a teleport and zero the velocity, so a knockback applied this
+ *    tick is wiped before the next physics tick. When such a packet does not actually move the
+ *    entity it is a no-op sync, and the momentum should survive it.
+ *
+ * This only reads packets the server already sent and keeps the velocity they carry, exactly as a
+ * stock client would. It sends nothing and never invents motion.
  */
 export function installKnockbackCompat(bot: Bot): void {
   const client = (bot as unknown as { _client?: RawClient })._client;
   if (!client || typeof client.on !== "function") return;
 
-  const onPacket = (raw: unknown): void => {
+  const entity = (): EntityWithVelocity | undefined =>
+    (bot as unknown as { entity?: EntityWithVelocity }).entity;
+
+  const onVelocityPacket = (raw: unknown): void => {
     const version = (bot as unknown as { version?: string }).version ?? "";
     if (!usesLpVec3Velocity(version)) return;
 
@@ -62,11 +79,35 @@ export function installKnockbackCompat(bot: Bot): void {
     velocity.set(packet.velocity.x, packet.velocity.y, packet.velocity.z);
   };
 
-  // Mineflayer injects its plugins (and their packet handlers) on a later tick, so a handler
+  // Mineflayer's `position` handler runs on the same event and zeroes velocity. Capture the
+  // pre-handler state with a prepended listener, then restore it when the packet was a no-op.
+  let prePosition: Vec3Like | null = null;
+  let preVelocity: Vec3Like | null = null;
+  const capturePosition = (): void => {
+    const e = entity();
+    if (!e?.position || !e?.velocity) return;
+    prePosition = e.position.clone();
+    preVelocity = e.velocity.clone();
+  };
+  const restoreVelocity = (): void => {
+    const e = entity();
+    if (e?.position && e.velocity && prePosition && preVelocity) {
+      if (e.position.distanceTo(prePosition) < NO_OP_POSITION_EPSILON) {
+        e.velocity.set(preVelocity.x, preVelocity.y, preVelocity.z);
+      }
+    }
+    prePosition = null;
+    preVelocity = null;
+  };
+
+  // Mineflayer injects its plugins (and their packet handlers) on a later tick, so handlers
   // registered now would run before Mineflayer's own and be overwritten by it. Attach on `login`,
-  // by which point Mineflayer's handlers are installed, so ours runs last and wins.
+  // by which point Mineflayer's handlers are installed, so ours runs last (and the position
+  // capture is prepended to run first).
   const attach = (): void => {
-    client.on("entity_velocity", onPacket);
+    client.on("entity_velocity", onVelocityPacket);
+    (client.prependListener ?? client.on).call(client, "position", capturePosition);
+    client.on("position", restoreVelocity);
   };
   const botWithEvents = bot as unknown as { once(event: string, listener: () => void): unknown };
   if (typeof botWithEvents.once === "function") botWithEvents.once("login", attach);

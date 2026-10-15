@@ -308,7 +308,10 @@ cheats or modifications:
   `entity_velocity` packet carries blocks per tick, but Mineflayer still scales it by the older
   1/8000 fixed-point factor, shrinking real knockback to nothing. `src/minecraft/knockback.ts`
   copies the packet's value onto the entity so the bot is knocked back exactly as a stock client
-  would be. It reads the packet, sends nothing, and never invents motion.
+  would be. The same helper keeps that momentum across position packets that do not actually move
+  the bot: some servers and anti-cheats re-send the player's current position every tick, and
+  Mineflayer treats each as a teleport and zeroes the velocity, which otherwise cancels a knockback
+  before the next physics tick. It reads the packets, sends nothing, and never invents motion.
 - Attack range is capped at the vanilla melee reach of 3.0 blocks (`VANILLA_ATTACK_REACH`). The
   executor clamps it again as a second guard, and `NANOJEV_ATTACK_RANGE` cannot be set higher.
 - Movement is ordinary sprinting, and the server stays authoritative. The attack interval cannot

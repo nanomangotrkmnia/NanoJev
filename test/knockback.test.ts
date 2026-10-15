@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Bot } from "mineflayer";
 import { installKnockbackCompat, usesLpVec3Velocity } from "../src/minecraft/knockback.js";
 
@@ -17,78 +17,133 @@ describe("usesLpVec3Velocity", () => {
   });
 });
 
-interface FakeVelocity {
-  value: { x: number; y: number; z: number };
-  set(x: number, y: number, z: number): void;
+class Vec3 {
+  x: number;
+  y: number;
+  z: number;
+  constructor(x = 0, y = 0, z = 0) {
+    this.x = x;
+    this.y = y;
+    this.z = z;
+  }
+  clone() {
+    return new Vec3(this.x, this.y, this.z);
+  }
+  distanceTo(other: { x: number; y: number; z: number }) {
+    return Math.hypot(this.x - other.x, this.y - other.y, this.z - other.z);
+  }
+  set(x: number, y: number, z: number) {
+    this.x = x;
+    this.y = y;
+    this.z = z;
+    return this;
+  }
+  toString() {
+    return `(${this.x}, ${this.y}, ${this.z})`;
+  }
 }
 
-function fakeBot(version: string, entityId: number): { bot: Bot; velocity: FakeVelocity; emit: (packet: unknown) => void } {
-  const listeners: Array<(packet: unknown) => void> = [];
-  const velocity: FakeVelocity = {
-    value: { x: 0, y: 0, z: 0 },
-    set(x, y, z) {
-      this.value = { x, y, z };
+type Listener = (...args: any[]) => void;
+
+function fakeClient() {
+  const listeners: Record<string, Listener[]> = {};
+  return {
+    on(event: string, listener: Listener) {
+      (listeners[event] ??= []).push(listener);
+      return this;
+    },
+    prependListener(event: string, listener: Listener) {
+      (listeners[event] ??= []).unshift(listener);
+      return this;
+    },
+    emit(event: string, ...args: unknown[]) {
+      for (const listener of [...(listeners[event] ?? [])]) listener(...args);
+    },
+    order(event: string) {
+      return listeners[event] ?? [];
     },
   };
-  const client = {
-    on(event: string, listener: (packet: unknown) => void) {
-      if (event === "entity_velocity") listeners.push(listener);
-      return client;
-    },
-  };
+}
+
+function fakeBot(version: string, entityId: number) {
+  const client = fakeClient();
+  const entity = { position: new Vec3(0, 0, 0), velocity: new Vec3(0, 0, 0) };
+  const other = { position: new Vec3(0, 0, 0), velocity: new Vec3(0, 0, 0) };
   const bot = {
     version,
     _client: client,
-    entities: { [entityId]: { velocity } },
+    entity,
+    entities: { [entityId]: other },
   } as unknown as Bot;
-  return { bot, velocity, emit: (packet) => listeners.forEach((listener) => listener(packet)) };
+  return { bot, client, entity, other };
 }
 
-describe("installKnockbackCompat", () => {
-  it("attaches only after login, so it runs after Mineflayer's own handler", () => {
-    const listeners: Array<(packet: unknown) => void> = [];
-    const loginListeners: Array<() => void> = [];
-    const velocity = { value: { x: 0, y: 0, z: 0 }, set(x: number, y: number, z: number) { this.value = { x, y, z }; } };
-    const bot = {
-      version: "1.21.11",
-      once(event: string, listener: () => void) {
-        if (event === "login") loginListeners.push(listener);
-        return bot;
-      },
-      _client: { on: (_event: string, listener: (packet: unknown) => void) => void listeners.push(listener) },
-      entities: { 7: { velocity } },
-    } as unknown as Bot;
-
-    installKnockbackCompat(bot);
-    expect(listeners).toHaveLength(0);
-
-    loginListeners.forEach((listener) => listener());
-    expect(listeners).toHaveLength(1);
-    listeners[0]!({ entityId: 7, velocity: { x: -0.4, y: 0.36, z: -0.07 } });
-    expect(velocity.value).toEqual({ x: -0.4, y: 0.36, z: -0.07 });
-  });
-
+describe("installKnockbackCompat entity velocity", () => {
   it("applies the server's velocity verbatim on 1.21.9+", () => {
-    const { bot, velocity, emit } = fakeBot("1.21.11", 42);
+    const { bot, client, other } = fakeBot("1.21.11", 42);
     installKnockbackCompat(bot);
-    emit({ entityId: 42, velocity: { x: -0.394, y: 0.361, z: -0.067 } });
-    expect(velocity.value).toEqual({ x: -0.394, y: 0.361, z: -0.067 });
+    client.emit("entity_velocity", { entityId: 42, velocity: { x: -0.394, y: 0.361, z: -0.067 } });
+    expect(other.velocity.toString()).toBe("(-0.394, 0.361, -0.067)");
   });
 
   it("ignores the packet on versions that still use the fixed-point encoding", () => {
-    const { bot, velocity, emit } = fakeBot("1.21.8", 42);
+    const { bot, client, other } = fakeBot("1.21.8", 42);
     installKnockbackCompat(bot);
-    emit({ entityId: 42, velocity: { x: -0.394, y: 0.361, z: -0.067 } });
-    expect(velocity.value).toEqual({ x: 0, y: 0, z: 0 });
+    client.emit("entity_velocity", { entityId: 42, velocity: { x: -0.394, y: 0.361, z: -0.067 } });
+    expect(other.velocity.toString()).toBe("(0, 0, 0)");
+  });
+});
+
+describe("installKnockbackCompat position syncs", () => {
+  // Mimics Mineflayer's own `position` handler: it moves to the packet target and zeroes velocity.
+  function mineflayerPositionHandler(entity: { position: Vec3; velocity: Vec3 }) {
+    return (packet: { x: number; y: number; z: number }) => {
+      entity.position.set(packet.x, packet.y, packet.z);
+      entity.velocity.set(0, 0, 0);
+    };
+  }
+
+  it("keeps momentum across a no-op position packet that stays put", () => {
+    const { bot, client, entity } = fakeBot("1.21.11", 1);
+    entity.position.set(5, 64, 5);
+    entity.velocity.set(-0.394, 0.361, -0.067);
+    client.on("position", mineflayerPositionHandler(entity));
+    installKnockbackCompat(bot);
+
+    client.emit("position", { x: 5, y: 64, z: 5 });
+    expect(entity.velocity.toString()).toBe("(-0.394, 0.361, -0.067)");
   });
 
-  it("ignores packets for unknown entities and malformed payloads", () => {
-    const { bot, velocity, emit } = fakeBot("1.21.11", 42);
-    const set = vi.spyOn(velocity, "set");
+  it("does not keep momentum when the packet actually moves the entity", () => {
+    const { bot, client, entity } = fakeBot("1.21.11", 1);
+    entity.position.set(5, 64, 5);
+    entity.velocity.set(-0.394, 0.361, -0.067);
+    client.on("position", mineflayerPositionHandler(entity));
     installKnockbackCompat(bot);
-    emit({ entityId: 99, velocity: { x: 1, y: 1, z: 1 } });
-    emit({ entityId: 42 });
-    emit(null);
-    expect(set).not.toHaveBeenCalled();
+
+    client.emit("position", { x: 25, y: 64, z: 5 });
+    expect(entity.velocity.toString()).toBe("(0, 0, 0)");
+  });
+
+  it("captures the pre-handler state before Mineflayer's handler runs", () => {
+    const { bot, client, entity } = fakeBot("1.21.11", 1);
+    const handler = mineflayerPositionHandler(entity);
+    client.on("position", handler);
+    installKnockbackCompat(bot);
+    // The capture listener must be prepended, ahead of Mineflayer's.
+    expect(client.order("position")[0]).not.toBe(handler);
+    expect(client.order("position")).toHaveLength(3);
+  });
+
+  it("attaches on login when the bot exposes an event emitter", () => {
+    const { bot, client } = fakeBot("1.21.11", 1);
+    const loginListeners: Array<() => void> = [];
+    (bot as unknown as { once(event: string, listener: () => void): void }).once = (event, listener) => {
+      if (event === "login") loginListeners.push(listener);
+    };
+    installKnockbackCompat(bot);
+    expect(client.order("entity_velocity")).toHaveLength(0);
+    loginListeners.forEach((listener) => listener());
+    expect(client.order("entity_velocity")).toHaveLength(1);
   });
 });
