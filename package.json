@@ -1,0 +1,38 @@
+{
+  "name": "nanojev",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Autonomous Minecraft PvP bot that uses TypeSafe Jev (System One) as its combat decision agent.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "nanojev": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "node dist/index.js run",
+    "dev": "tsx src/index.ts run",
+    "setup": "tsx src/index.ts setup",
+    "models": "tsx src/index.ts models",
+    "openjev": "tsx src/index.ts openjev",
+    "codiv": "tsx src/index.ts codiv",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.7.0",
+    "dotenv": "^16.4.7",
+    "mineflayer": "^4.39.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

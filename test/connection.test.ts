@@ -1,0 +1,135 @@
+import { describe, expect, it } from "vitest";
+import type { Bot } from "mineflayer";
+import { loadConfig } from "../src/config.js";
+import { createLogger } from "../src/logger.js";
+import { MinecraftConnection, type ConnectionEvents } from "../src/minecraft/connection.js";
+
+const logger = createLogger({ level: "error", sink: () => {} });
+
+interface FakeEmitter {
+  bot: Bot;
+  emit(event: string, ...args: unknown[]): void;
+}
+
+function fakeBotFactory(): FakeEmitter {
+  const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
+  const bot = {
+    on(event: string, listener: (...args: unknown[]) => void) {
+      (listeners[event] ??= []).push(listener);
+      return bot;
+    },
+    once(event: string, listener: (...args: unknown[]) => void) {
+      const wrapped = (...args: unknown[]) => {
+        bot.off(event, wrapped);
+        listener(...args);
+      };
+      (listeners[event] ??= []).push(wrapped);
+      return bot;
+    },
+    off(event: string, listener: (...args: unknown[]) => void) {
+      listeners[event] = (listeners[event] ?? []).filter((candidate) => candidate !== listener);
+      return bot;
+    },
+    quit() {
+      return undefined;
+    },
+  };
+  return {
+    bot: bot as unknown as Bot,
+    emit(event, ...args) {
+      for (const listener of [...(listeners[event] ?? [])]) listener(...args);
+    },
+  };
+}
+
+function makeConnection(events: ConnectionEvents, env: Record<string, string> = {}) {
+  const config = loadConfig({ env: { MC_RECONNECT_MAX_ATTEMPTS: "0", ...env } });
+  const emitter = fakeBotFactory();
+  const connection = new MinecraftConnection({
+    config,
+    logger,
+    events,
+    createBotImpl: () => emitter.bot,
+  });
+  connection.start();
+  return { connection, emitter };
+}
+
+describe("MinecraftConnection lifecycle", () => {
+  it("reports a spawn and marks the connection connected", () => {
+    let spawned = false;
+    const { connection, emitter } = makeConnection({ onSpawn: () => (spawned = true) });
+    emitter.emit("spawn");
+    expect(spawned).toBe(true);
+    expect(connection.connected).toBe(true);
+    connection.stop();
+  });
+});
+
+describe("MinecraftConnection kick classification", () => {
+  it("treats a whitelist kick as fatal, not an auth failure", () => {
+    let fatal = "";
+    let auth = "";
+    const { connection, emitter } = makeConnection({
+      onFatal: (reason) => (fatal = reason),
+      onAuthenticationFailure: (reason) => (auth = reason),
+    });
+    emitter.emit("kicked", "You are not whitelisted on this server!", false);
+    expect(fatal).toContain("whitelist");
+    expect(auth).toBe("");
+    connection.stop();
+  });
+
+  it("treats an authentication kick as an auth failure", () => {
+    let fatal = "";
+    let auth = "";
+    const { connection, emitter } = makeConnection({
+      onFatal: (reason) => (fatal = reason),
+      onAuthenticationFailure: (reason) => (auth = reason),
+    });
+    emitter.emit("kicked", "Failed to verify username! Not authenticated.", false);
+    expect(auth).not.toBe("");
+    expect(fatal).toBe("");
+    connection.stop();
+  });
+
+  it("does not treat a generic pre-login kick as auth or fatal", () => {
+    let fatal = "";
+    let auth = "";
+    const { connection, emitter } = makeConnection({
+      onFatal: (reason) => (fatal = reason),
+      onAuthenticationFailure: (reason) => (auth = reason),
+    });
+    emitter.emit("kicked", "Server is full", false);
+    expect(fatal).toBe("");
+    expect(auth).toBe("");
+    connection.stop();
+  });
+
+  it("classifies an auth error event", () => {
+    let auth = "";
+    const { connection, emitter } = makeConnection({ onAuthenticationFailure: (reason) => (auth = reason) });
+    emitter.emit("error", new Error("Invalid credentials. Failed to authenticate"));
+    expect(auth).not.toBe("");
+    connection.stop();
+  });
+});
+
+describe("MinecraftConnection reconnect policy", () => {
+  it("is fatal when disconnected and reconnect is disabled", () => {
+    let fatal = "";
+    const { connection, emitter } = makeConnection({ onFatal: (reason) => (fatal = reason) }, { MC_RECONNECT: "false" });
+    emitter.emit("end", "socketClosed");
+    expect(fatal).toContain("reconnect is disabled");
+    connection.stop();
+  });
+
+  it("does not retry after an auth failure", () => {
+    let fatal = "";
+    const { connection, emitter } = makeConnection({ onFatal: (reason) => (fatal = reason) });
+    emitter.emit("kicked", "authentication failed", false);
+    emitter.emit("end", "kicked");
+    expect(fatal).toContain("authentication failed");
+    connection.stop();
+  });
+});
