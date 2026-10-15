@@ -303,8 +303,12 @@ cheats or modifications:
 
 - It drives Mineflayer only through normal inputs: the movement control states
   (`forward`/`back`/`left`/`right`/`jump`/`sprint`/`sneak`), look, attack, and use-item. It never
-  writes packets, never sets position or velocity, never teleports, and never changes client
-  physics.
+  writes packets, never sets position, never teleports, and never changes client physics.
+- The one velocity it applies is the knockback the server already sent. On Minecraft 1.21.9+ the
+  `entity_velocity` packet carries blocks per tick, but Mineflayer still scales it by the older
+  1/8000 fixed-point factor, shrinking real knockback to nothing. `src/minecraft/knockback.ts`
+  copies the packet's value onto the entity so the bot is knocked back exactly as a stock client
+  would be. It reads the packet, sends nothing, and never invents motion.
 - Attack range is capped at the vanilla melee reach of 3.0 blocks (`VANILLA_ATTACK_REACH`). The
   executor clamps it again as a second guard, and `NANOJEV_ATTACK_RANGE` cannot be set higher.
 - Movement is ordinary sprinting, and the server stays authoritative. The attack interval cannot
@@ -314,8 +318,9 @@ cheats or modifications:
   or corrects it exactly as it would for any other client.
 
 A regression test (`test/vanilla.test.ts`) checks the reach and interval caps and scans the
-bot-behaviour modules for cheat-only APIs (`_client`, raw packet sends, `physicsEnabled`,
-teleport or position writes).
+bot-behaviour modules for cheat-only APIs (`physicsEnabled`, raw packet sends, teleport or position
+writes), and asserts the only packet NanoJev ever hand-writes is the required resource-pack
+response.
 
 ## Coordinates and rotation conventions
 

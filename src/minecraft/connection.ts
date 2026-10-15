@@ -3,6 +3,7 @@ import type { Bot, BotOptions } from "mineflayer";
 import type { Config } from "../config.js";
 import type { Logger } from "../logger.js";
 import type { BotLike } from "./bot.js";
+import { installKnockbackCompat } from "./knockback.js";
 
 const { createBot } = mineflayer;
 
@@ -180,6 +181,9 @@ export class MinecraftConnection {
     // protocol encodes as 16 zero bytes; the server ignores that reply and the bot hangs
     // until the connect timeout. Replying with the ASCII UUID lets the login complete.
     (bot as unknown as BotLike).on("resourcePack", (...args: unknown[]) => this.answerResourcePack(bot, args));
+
+    // Restore knockback on 1.21.9+, where Mineflayer mis-scales the server's velocity packet.
+    installKnockbackCompat(bot);
 
     bot.on("respawn", () => {
       this.logger.info("bot respawned");

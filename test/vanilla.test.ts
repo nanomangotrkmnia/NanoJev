@@ -70,6 +70,7 @@ describe("no cheat-only client APIs are used", () => {
     "src/actions.ts",
     "src/minecraft/connection.ts",
     "src/minecraft/bot.ts",
+    "src/minecraft/knockback.ts",
   ];
 
   it.each(files)("%s uses no cheat-only APIs", (file) => {
@@ -83,7 +84,7 @@ describe("no cheat-only client APIs are used", () => {
     // The raw client is otherwise off-limits. The single hand-written packet NanoJev may
     // send is the resource-pack response a stock client sends when a server requires a
     // pack during the configuration phase (without it the login stalls until the timeout).
-    for (const file of ["src/minecraft/connection.ts"]) {
+    for (const file of ["src/minecraft/connection.ts", "src/minecraft/knockback.ts"]) {
       const source = readFileSync(join(process.cwd(), file), "utf8");
       const packetWrites = [...source.matchAll(/\.write\(\s*["'`]([\w_]+)["'`]/g)].map((match) => match[1]);
       for (const name of packetWrites) {
