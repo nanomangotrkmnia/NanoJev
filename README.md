@@ -1,13 +1,14 @@
 # NanoJev
 
-NanoJev is an autonomous Minecraft **PvP bot**. It connects to a Minecraft Java Edition server
-with [Mineflayer](https://github.com/PrismarineJS/mineflayer), observes its own state, its target
-and the surrounding world, generates a **finite set of legal combat actions**, and asks a
-**System One decision model** (TypeSafe's **Jev**, or the open **OpenJev** server) to pick one.
-NanoJev's code decides what is *possible*, validates the model's choice, and executes it through
-Mineflayer.
+NanoJev is a Minecraft Java Edition PvP bot. It joins a server through
+[Mineflayer](https://github.com/PrismarineJS/mineflayer), keeps track of itself, its target, and
+the nearby world, works out which combat moves are actually possible right now, and hands that
+short list to a System One decision model: TypeSafe's Jev, or the open-source OpenJev. The model
+picks one. What is legal, whether the answer is valid, and how the move is carried out are all
+decided in code.
 
-> The model chooses the action. NanoJev decides what is legal, validates the choice, and executes it.
+The model never drives the bot directly. It gets one multiple-choice question and returns one
+choice.
 
 ---
 
@@ -23,6 +24,7 @@ Mineflayer.
 - [Target selection](#target-selection)
 - [The decision and action loop](#the-decision-and-action-loop)
 - [Combat actions](#combat-actions)
+- [Vanilla-only behaviour](#vanilla-only-behaviour)
 - [Coordinates and rotation conventions](#coordinates-and-rotation-conventions)
 - [Recovery and safety](#recovery-and-safety)
 - [Logging and metrics](#logging-and-metrics)
@@ -66,19 +68,19 @@ Mineflayer action execution        src/combat/executor.ts (movement, look, attac
 Updated game state ───────────────► (loop, without blocking the event loop)
 ```
 
-The decision model is a **structured choice model, not a text generator**. NanoJev sends it a
-compact JSON `state` and exactly one `choice` question whose options are the currently legal
-combat actions. It reads back `choice`, `probabilities`, and `confidence` — no free-form text, no
-JSON to coax out of a chatbot.
+The model is a classifier, not a writer. NanoJev sends it a small JSON snapshot of the fight plus
+one `choice` question whose answers are the legal moves, then reads back the chosen label, the
+probability of each label, and a confidence. There is no generated text to parse and no prompt
+tricks, because the model's job is only to choose.
 
 ## Prerequisites
 
-- **Node.js 22 or newer** (the official TypeSafe SDK requires it).
+- Node.js 22 or newer (the official TypeSafe SDK needs it).
 - A Minecraft Java Edition server you are allowed to connect to.
-- One of:
-  - a **TypeSafe API key** (hosted Jev), or
-  - a **Codiv API key** (hosted OpenJev), or
-  - **Docker with an NVIDIA GPU** / **Python** to run a local **OpenJev** server.
+- At least one way to reach a model:
+  - a TypeSafe API key (hosted Jev), or
+  - a Codiv API key (hosted OpenJev), or
+  - Docker with an NVIDIA GPU, or Python, to run OpenJev yourself.
 
 ## Install
 
@@ -87,14 +89,14 @@ npm install
 npm run build
 ```
 
-Or on Windows, just run **`start.bat`** — it installs, builds, runs first-time setup, and starts
-the bot in one step.
+On Windows you can skip both and run `start.bat`, which installs, builds, runs first-time setup,
+and starts the bot.
 
 ## Choose a decision backend
 
-NanoJev supports three backends. All three speak the TypeSafe **`POST /v1/systemone`** wire API
-with the same request/response shapes, so the same official `@typesafe-ai/sdk` client serves all
-of them (only the base URL, API key, and model differ).
+There are three backends. They all speak the same `POST /v1/systemone` API as TypeSafe Jev, so a
+single client (`@typesafe-ai/sdk`) talks to any of them. Only the URL, the key, and the model name
+change.
 
 | Backend | `NANOJEV_JEV_BACKEND` | Endpoint | Key | Hardware |
 |---|---|---|---|---|
@@ -102,7 +104,8 @@ of them (only the base URL, API key, and model differ).
 | Local OpenJev | `openjev` | `http://127.0.0.1:8080/v1/systemone` | none (a local server usually ignores auth) | GPU / CPU per model |
 | Codiv (hosted OpenJev) | `codiv` | `https://api.codiv.ai/v1/systemone` | `OPENJEV_API_KEY` (`sk-codiv-...`) from [codiv.ai](https://codiv.ai) | none |
 
-`nanojev setup` asks which backend to use on first run. You can also set it manually in `.env`.
+`nanojev setup` asks which one to use on the first run, and you can edit `.env` by hand at any
+time.
 
 ## Configure
 
@@ -112,9 +115,9 @@ Copy `.env.example` to `.env` and fill it in, or run:
 nanojev setup        # npm run setup
 ```
 
-`start.bat` runs setup automatically the first time (when `.env` does not exist).
+`start.bat` runs setup by itself the first time, when there is no `.env`.
 
-Key settings (see `.env.example` for the full list):
+The settings you are most likely to touch:
 
 | Variable | Meaning | Default |
 |---|---|---|
@@ -123,27 +126,28 @@ Key settings (see `.env.example` for the full list):
 | `OPENJEV_BASE_URL` | OpenJev server root | `http://127.0.0.1:8080` |
 | `OPENJEV_API_KEY` | OpenJev / Codiv key (`sk-codiv-...`) | — |
 | `OPENJEV_MODEL` | OpenJev model id | `openjev-latest` |
-| `MC_ADDRESS` | Full server address, `host` or `host:port` (e.g. `play.example.net:25617`); overrides `MC_HOST`/`MC_PORT` when it contains a port | — |
+| `MC_ADDRESS` | Full server address, `host` or `host:port` (for example `play.example.net:25617`); when it has a port it overrides `MC_HOST`/`MC_PORT` | — |
 | `MC_HOST` / `MC_PORT` | Minecraft server | `localhost` / `25565` |
 | `MC_USERNAME` | Bot username | `NanoJev` |
 | `MC_AUTH` | `offline` or `microsoft` | `offline` |
-| `MC_VERSION` | `auto` (detect from ping) or a pinned version | `auto` |
-| `MC_TARGET` | Target username (blank = nearest player) | — |
-| `MC_TARGET_MODE` | `explicit` or `nearest` (auto) | auto |
-| `MC_TARGET_RANGE` | Acquisition range, blocks | `32` |
-| `NANOJEV_LOOP_HZ` | Observation/execution tick rate | `20` |
+| `MC_VERSION` | `auto` (read from the server ping) or a pinned version | `auto` |
+| `MC_TARGET` | Target username; blank means nearest player | — |
+| `MC_TARGET_MODE` | `explicit` or `nearest` (chosen automatically) | auto |
+| `MC_TARGET_RANGE` | Acquisition range, in blocks | `32` |
+| `NANOJEV_LOOP_HZ` | Observation and execution tick rate | `20` |
 | `NANOJEV_DECISION_MIN_INTERVAL_MS` | Minimum gap between decision requests | `250` |
-| `NANOJEV_ATTACK_INTERVAL_MS` | Attack cooldown approximation, floored at one tick (50 ms) | `625` |
-| `NANOJEV_ATTACK_RANGE` | Melee reach in blocks, hard-capped at vanilla (3) | `3` |
-| `NANOJEV_WTAP_ENABLED` | Offer a W-tap (sprint reset) as a selectable action | `true` |
-| `NANOJEV_WTAP_RELEASE_TICKS` | Ticks to hold the W-tap release phase (1 tick = 50 ms) | `2` |
-| `NANOJEV_HITSELECT_ENABLED` | Offer hitselect (save the hit, then jump-crit) | `true` |
+| `NANOJEV_ATTACK_INTERVAL_MS` | Attack cooldown estimate, floored at one tick (50 ms) | `625` |
+| `NANOJEV_ATTACK_RANGE` | Melee reach in blocks, capped at vanilla (3) | `3` |
+| `NANOJEV_WTAP_ENABLED` | Offer the W-tap as a selectable action | `true` |
+| `NANOJEV_WTAP_RELEASE_TICKS` | Ticks to hold the W-tap release (1 tick = 50 ms) | `2` |
+| `NANOJEV_HITSELECT_ENABLED` | Offer hitselect (hold the hit, then jump-crit) | `true` |
 | `NANOJEV_HITSELECT_TICKS` | Ticks to hold the hit before the crit (1–3) | `2` |
-| `NANOJEV_JUMP_RESET_ENABLED` | Offer jump reset (jump to reset sprint, then hit) | `true` |
-| `NANOJEV_ON_JEV_FAILURE` | `halt` (default) or `hold` | `halt` |
+| `NANOJEV_JUMP_RESET_ENABLED` | Offer jump reset (jump on the hit's tick to cut knockback) | `true` |
+| `NANOJEV_ON_JEV_FAILURE` | `halt` or `hold` | `halt` |
 | `NANOJEV_LOG_LEVEL` | `debug`, `info`, `warn`, `error` | `info` |
 
-Secrets are never logged; the logger redacts API-key-shaped fields.
+`.env.example` has the complete list. Keys are never written to the log; the logger redacts
+anything that looks like a credential.
 
 ## Run
 
@@ -152,43 +156,38 @@ npm start            # node dist/index.js run   (after npm run build)
 npm run dev          # tsx src/index.ts run     (no build step)
 ```
 
-CLI commands:
+Commands:
 
 ```bash
 nanojev                 # connect the bot and start the combat loop
 nanojev run             # same as the default
-nanojev setup           # interactive first-run configuration (writes .env)
+nanojev setup           # interactive configuration, writes .env
 nanojev models          # list OpenJev models with hardware and ease-of-run
-nanojev openjev         # start the local OpenJev server (add --execute to run)
-nanojev codiv           # show how to use Codiv's hosted OpenJev and check reachability
+nanojev openjev         # start the local OpenJev server (add --execute to actually run it)
+nanojev codiv           # how to use Codiv's hosted OpenJev, plus a reachability check
 nanojev help
 ```
 
-Startup prints a concise status report: server, bot username, auth, Minecraft version support,
-target mode, loop tuning, and the decision provider (model + endpoint, never the key).
+On startup NanoJev prints one line with the server, bot username, auth mode, Minecraft version
+support, target mode, loop settings, and the decision provider (model and endpoint, never the key).
 
 ## The local OpenJev server
 
 [OpenJev](https://github.com/razorback16/openjev) is an independent, open, Jev-compatible System
-One decision server. It runs DiffusionGemma, Laya, Verdict, CLM, JevK5, or Cloudflare's Clef
-models and exposes the same API as Jev.
+One server. It runs DiffusionGemma, Laya, Verdict, CLM, JevK5, or Cloudflare's Clef models and
+exposes the same API as Jev.
 
-**`run-openjev.bat`** (Windows) or **`nanojev openjev`**:
-
-1. detects your hardware,
-2. lists the available models as `id (Supports: <hardware>, <ease-of-run 1-10>)`,
-3. lets you pick one (you can change it later),
-4. writes the choice to `.env` (`NANOJEV_JEV_BACKEND=openjev`, `OPENJEV_MODEL=...`),
-5. checks whether a server is already running.
-
-Example menu line (this is the exact format the launcher prints):
+`run-openjev.bat` (Windows) and `nanojev openjev` both detect your hardware, list the models as
+`id (Supports: <hardware>, <ease-of-run 1-10>)`, let you choose one, write the choice to `.env`
+(`NANOJEV_JEV_BACKEND=openjev`, `OPENJEV_MODEL=...`), and check whether a server is already
+running. You can change the model later. A menu line looks like this:
 
 ```
 clef-flash-1.0 (Supports: NVIDIA Blackwell GPU (RTX 50 / Pro), ~12 GB VRAM, 6/10)
     Clef-flash - Clef-flash by Cloudflare: Clef on Qwen3.5-9B, NVFP4
 ```
 
-Available models:
+The models:
 
 | Model id | Model | Size | Runs on | Ease |
 |---|---|---|---|---|
@@ -200,169 +199,164 @@ Available models:
 | `clef-1.0` | Clef (Cloudflare) | 27B NVFP4 | NVIDIA Blackwell | 3/10 |
 | `clef-flash-1.0` | Clef-flash (Cloudflare) | 9B NVFP4 | NVIDIA Blackwell | 6/10 |
 
-To actually launch the server, `run-openjev.bat` (or `nanojev openjev --execute`) clones the
-OpenJev repo into `tools/openjev`, chooses the right backend (`docker compose up -d` on an NVIDIA
-GPU, otherwise `pip install -e '.[backend]' && python -m openjev`), and starts it on
-`127.0.0.1:8080`. See the OpenJev README for GPU/Docker/Apple-silicon setup details.
+To launch it, `run-openjev.bat` (or `nanojev openjev --execute`) clones the OpenJev repo into
+`tools/openjev`, picks the right backend (`docker compose up -d` on an NVIDIA GPU, otherwise
+`pip install -e '.[backend]' && python -m openjev`), and starts it on `127.0.0.1:8080`. The
+OpenJev README covers the GPU, Docker, and Apple-silicon details.
 
-If you do not want to run anything locally, use **Codiv**: `nanojev codiv` prints the exact `.env`
-values, or choose "Codiv" in `nanojev setup`.
+If you would rather not run anything locally, use Codiv: `nanojev codiv` prints the exact `.env`
+values, or choose Codiv in `nanojev setup`.
 
 ## Target selection
 
-- Set `MC_TARGET=<username>` to lock onto a specific player. Other nearby players are **not**
-  treated as hostile.
-- Leave `MC_TARGET` blank (or set `MC_TARGET_MODE=nearest`) to auto-target the **nearest eligible
-  player**.
-- A target is eligible only if it is a live player entity, is not the bot, is present, has
-  positive health when known, and is within `MC_TARGET_RANGE`.
-- The current target is kept stable while it remains valid, and reacquired only when it is lost.
+- Setting `MC_TARGET=<username>` locks onto that player. Other players nearby are not treated as
+  hostile.
+- Leaving `MC_TARGET` blank (or setting `MC_TARGET_MODE=nearest`) targets the nearest eligible
+  player instead.
+- A player is eligible only if it is a live player entity, is not the bot, is still present, has
+  positive health where health is known, and is within `MC_TARGET_RANGE`.
+- The current target is kept while it stays valid and only reacquired once it is lost.
 
 ## The decision and action loop
 
-Five concerns run on **separate schedules** so a slow network model never blocks the game:
+The bot does not run everything on one timer. Observation sampling and action execution share the
+tick loop (`NANOJEV_LOOP_HZ`, 20 Hz by default). Aiming at the target happens every tick as well.
+Decision requests go out on their own asynchronous path, one at a time, spaced by
+`NANOJEV_DECISION_MIN_INTERVAL_MS` and backed off exponentially after failures. Logging and metrics
+run on a slow timer. A slow model therefore cannot stall movement or attacks.
 
-- **Observation sampling** and **action execution** run on the tick loop (`NANOJEV_LOOP_HZ`,
-  default 20 Hz).
-- **Target tracking** (aim) runs every tick, independent of the decision.
-- **Decision requests** are dispatched asynchronously, at most **one in flight**, gated by
-  `NANOJEV_DECISION_MIN_INTERVAL_MS` and an exponential backoff after failures.
-- **Logging/metrics** are sampled periodically.
+Only one decision is ever in flight. A reply is thrown away as stale if the target changed, if the
+observation changed in a way that matters (distance, health, range state, attack readiness, open
+directions), or if the chosen action is no longer legal. While the next decision is pending, the
+bot keeps using its current valid action. If only one action is possible, no decision is requested
+at all.
 
-At most one decision is in flight. A response is **discarded as stale** if the target changed, if
-the observation changed materially (distance bucket, health bucket, range state, attack readiness,
-open directions), or if the selected action is no longer legal. The current valid action is reused
-across ticks while the next decision is pending. If only one action is possible, no decision is
-requested at all.
-
-> A 24 ms decision interval implies ~41.7 decisions/s. That is **not** a performance claim:
-> network inference may take longer. NanoJev measures and reports actual latency (median, p95),
-> timeouts, and decision throughput rather than assuming a number.
+A 24 ms decision interval would work out to about 42 requests a second. That number is not a claim
+NanoJev makes: network inference can take much longer. NanoJev measures and reports the real
+latency (median and p95), the timeout count, and the decision throughput instead of assuming one.
 
 ## Combat actions
 
-The model chooses from only the actions valid in the current state:
+The model chooses from the actions that are valid at that moment:
 
 `approach`, `close_distance_sprinting`, `strafe_left`, `strafe_right`, `retreat`, `hold_position`,
 `track_target`, `attack_target`, `jump_attack`, `sprint_reset_attack`, `hitselect`, `jump_reset`,
 `raise_shield`, `reposition`.
 
-Rules enforced in code:
+The rules that decide what gets offered live in code:
 
-- `attack_target`, `jump_attack`, `sprint_reset_attack`, `hitselect`, and `jump_reset` are offered
-  only with a valid in-range target **and** when the attack is off cooldown; the jump-based ones
-  (`jump_attack`, `hitselect`, `jump_reset`) and the W-tap only when grounded and with room to move.
-- The techniques are offered **alongside** the normal attack, so the model chooses whether to just
-  hit or to set up a W-tap / hitselect / jump reset. Disable each with `NANOJEV_WTAP_ENABLED`,
-  `NANOJEV_HITSELECT_ENABLED`, `NANOJEV_JUMP_RESET_ENABLED`.
-- Movement actions are withheld when the adjacent space is blocked (no open directions).
-- `raise_shield` is offered only when a shield is actually available.
-- Each option carries a description of its tactical effect, constraints, and trade-offs.
+- `attack_target`, `jump_attack`, `sprint_reset_attack`, `hitselect`, and `jump_reset` need a valid
+  in-range target and an attack that is off cooldown. The jump-based ones (`jump_attack`,
+  `hitselect`, `jump_reset`) and the W-tap also need the bot on the ground with room to move.
+- The techniques are offered next to the plain attack, so the model decides whether to just hit or
+  to set up a W-tap, a hitselect, or a jump reset. Turn each off with `NANOJEV_WTAP_ENABLED`,
+  `NANOJEV_HITSELECT_ENABLED`, or `NANOJEV_JUMP_RESET_ENABLED`.
+- Movement actions are left out when the space next to the bot is blocked.
+- `raise_shield` only appears when the bot actually has a shield.
+- Every option carries a description of what it does, when it is valid, and what it costs.
 
 ### W-tap (sprint reset)
 
-A W-tap releases `forward`+`sprint` for a short beat, lands one hit while not sprinting, then
-re-engages a fresh sprint. NanoJev executes it as a **timeline** (release phase → hit → re-sprint)
-rather than a constant input. Because Minecraft runs at 20 ticks/second, timing is quantised to
-50 ms; the release is held for `NANOJEV_WTAP_RELEASE_TICKS` (default `2` = ~100 ms, which is more
-reliable than a single tick, where the server may not observe the released state). The knockback
-benefit is **server/version dependent and not guaranteed** — it is treated as an approximation,
-like the attack cooldown.
+A W-tap releases `forward` and `sprint` for a beat, lands one hit while not sprinting, then sprints
+again. NanoJev plays it as a short timeline (release, hit, re-sprint) rather than a fixed input.
+Minecraft runs at 20 ticks a second, so timing is quantised to 50 ms, and the release is held for
+`NANOJEV_WTAP_RELEASE_TICKS` (default `2`, about 100 ms). Two ticks is more reliable than one,
+because a single tick can slip past the server without it ever seeing the released state. The
+knockback benefit depends on the server and version and is not guaranteed, so it is documented as
+an estimate in the same way as the attack cooldown.
 
 ### Hitselect (delayed crit)
 
-`hitselect` deliberately *saves* the hit for `NANOJEV_HITSELECT_TICKS` (1–3 ticks), then jumps and
-attacks **while airborne and falling** — the critical-hit condition. The bot reads its real
-`onGround` and vertical velocity (`entity.velocity.y < 0`) to gate the swing, so the crit attempt
-only fires when the crit is actually possible; if it never becomes possible within the window it
-attacks nothing and moves on. Critical hits do markedly more damage in versions that have them,
-and the window/values are version dependent, so this is labelled an approximation. The trade-off:
-delaying risks eating the opponent's hit first.
+`hitselect` holds the hit for `NANOJEV_HITSELECT_TICKS` (1 to 3 ticks), then jumps and attacks
+while airborne and falling, which is the condition for a critical hit. The bot checks its real
+`onGround` and vertical velocity (`entity.velocity.y < 0`), so the swing only goes out when the
+crit is actually possible; if it never becomes possible inside the window, the bot does not attack
+and moves on. Crits do much more damage in versions that have them, and the timing and values vary
+by version, so this is an approximation too. The cost is that waiting can mean eating the
+opponent's hit first.
 
 ### Jump reset
 
-`jump_reset` jumps **on the same tick as the hit** to cancel/reduce the knockback taken, keeping
-the attack on schedule and momentum intact. As with the other techniques, the knockback reduction
-is server/version dependent and not guaranteed.
+`jump_reset` jumps on the same tick as the hit. Jumping at that moment can cancel or reduce the
+knockback the bot takes, and it keeps the attack on schedule. As with the other techniques, the
+knockback reduction depends on the server and version and is not guaranteed.
 
-### Multi-tick techniques are committed
+### Techniques are committed once started
 
-All three techniques are played as timelines advanced one phase per tick. A decision that arrives
-while a technique is mid-sequence is **ignored for that action** (the sequence continues); the
-technique only restarts when a different action is chosen, or the same action is chosen again after
-the previous sequence finished. This keeps a "hold for 1–3 ticks, then crit" from being reset every
-decision interval.
+All three techniques are timelines advanced one phase per tick. A decision that arrives while a
+technique is still running is ignored for that action, so the sequence keeps going. It only starts
+over when a different action is chosen, or when the same action is chosen again after the previous
+sequence has finished. Without this, a "hold for a few ticks, then crit" would be restarted every
+decision interval and would never land.
 
-Movement controls are released when an action ends, the target disappears, the bot disconnects,
-or NanoJev shuts down. Conflicting action routines cannot drive the bot at the same time.
+Movement controls are released when an action ends, the target disappears, the bot disconnects, or
+NanoJev shuts down, and two action routines can never drive the bot at once.
 
 ## Vanilla-only behaviour
 
-NanoJev is designed so every action is achievable by a **stock Minecraft Java client** — no
-client-side cheats or modifications:
+Everything NanoJev does is something a stock Minecraft client can do. There are no client-side
+cheats or modifications:
 
-- **Inputs only.** The bot drives Mineflayer through ordinary client inputs: movement control
-  states (`forward`/`back`/`left`/`right`/`jump`/`sprint`/`sneak`), look, attack, and use-item.
-  It never writes packets, sets position/velocity, teleports, or tunes client physics.
-- **No reach extension.** Attack range is hard-capped at the vanilla melee reach of **3.0 blocks**
-  (`VANILLA_ATTACK_REACH`), the executor clamps it again defensively, and `NANOJEV_ATTACK_RANGE`
-  cannot be configured higher.
-- **No speed or attack-rate cheats.** Movement is normal sprinting (the server remains
-  authoritative); the attack interval is floored at one server tick (50 ms), and the bot sends at
-  most one attack per tick.
-- **Tick-aligned techniques.** W-taps and similar timing cannot go below one server tick (50 ms).
-- The server is authoritative throughout: Mineflayer only proposes movement, and the server
-  accepts or corrects it like any client.
+- It drives Mineflayer only through normal inputs: the movement control states
+  (`forward`/`back`/`left`/`right`/`jump`/`sprint`/`sneak`), look, attack, and use-item. It never
+  writes packets, never sets position or velocity, never teleports, and never changes client
+  physics.
+- Attack range is capped at the vanilla melee reach of 3.0 blocks (`VANILLA_ATTACK_REACH`). The
+  executor clamps it again as a second guard, and `NANOJEV_ATTACK_RANGE` cannot be set higher.
+- Movement is ordinary sprinting, and the server stays authoritative. The attack interval cannot
+  go below one server tick (50 ms), and the bot sends at most one attack per tick.
+- Techniques cannot be timed below a single server tick.
+- The server is authoritative throughout. Mineflayer only proposes movement, and the server accepts
+  or corrects it exactly as it would for any other client.
 
-A regression test (`test/vanilla.test.ts`) asserts the reach/interval caps and scans the
+A regression test (`test/vanilla.test.ts`) checks the reach and interval caps and scans the
 bot-behaviour modules for cheat-only APIs (`_client`, raw packet sends, `physicsEnabled`,
-teleport/position writes).
+teleport or position writes).
 
 ## Coordinates and rotation conventions
 
-Mineflayer's entity rotation is stored in **radians** in a convention offset from vanilla
-("notchian") yaw. NanoJev documents and uses it exactly:
+Mineflayer stores entity rotation in radians, in a convention offset from vanilla ("notchian") yaw.
+NanoJev uses it as-is and documents it:
 
-- Coordinates: `+X` = east, `+Y` = up, `+Z` = south.
-- `entity.yaw`: `0` faces **north** (`-Z`), `+π/2` faces **west** (`-X`), `-π/2` faces **east**
-  (`+X`), `π` faces **south** (`+Z`).
-- `entity.pitch`: `0` is horizontal, positive looks **up**, range `[-π/2, π/2]`.
-- Looking at a point: `yaw = atan2(-dx, -dz)`, `pitch = atan2(dy, hypot(dx, dz))` — identical to
+- Coordinates: `+X` is east, `+Y` is up, `+Z` is south.
+- `entity.yaw`: `0` faces north (`-Z`), `+π/2` faces west (`-X`), `-π/2` faces east (`+X`), and `π`
+  faces south (`+Z`).
+- `entity.pitch`: `0` is level, positive looks up, range `[-π/2, π/2]`.
+- To face a point: `yaw = atan2(-dx, -dz)` and `pitch = atan2(dy, hypot(dx, dz))`, the same as
   Mineflayer's own `bot.lookAt`.
-- Relative yaw in the observation is reported in degrees, positive meaning the target is to the
-  bot's **left**.
+- Relative yaw in the observation is in degrees, positive meaning the target is to the bot's left.
 
-Information that is not directly available is labelled: target **health** is `measured` when the
-entity exposes it and `unavailable` otherwise; **line of sight** is `estimated` from a world
-raycast or `unavailable`; **attack readiness** is `estimated` from a configurable interval.
+Values that cannot be read directly are labelled. Target health is `measured` when the entity
+exposes it and `unavailable` otherwise. Line of sight is `estimated` from a world raycast, or
+`unavailable`. Attack readiness is `estimated` from the configured interval.
 
 ## Recovery and safety
 
 | Failure | Behaviour |
 |---|---|
-| Jev/OpenJev auth error | New combat actions halt; the bot does not act on model output. |
+| Jev/OpenJev auth error | New combat actions stop; the bot does not act on model output. |
 | Request timeout | Decision discarded, controls released, bounded exponential backoff. |
-| Service outage / 5xx | Same as timeout; with `NANOJEV_ON_JEV_FAILURE=hold` the previous action is kept instead. |
-| Malformed / off-schema answer | Rejected; the failure is logged and counted. |
-| Action not in the offered set | Rejected; never executed. |
-| Target disappears | Target reacquired or cleared; controls released. |
-| Minecraft disconnect | Bounded reconnect with exponential backoff; **never** on auth failures. |
-| Kick: whitelist / ban / no permission | Treated as fatal (retrying cannot help); NanoJev exits with an error and a clear message. |
-| Kick: server full / restarting | Treated as a normal disconnect and retried with backoff. |
-| Respawn / world change | Observations and decisions are rebuilt from the new state. |
-| Unhandled exception / SIGINT / SIGTERM | Graceful shutdown: stop the loop, release controls, disconnect. |
+| Service outage or 5xx | Same as a timeout, except with `NANOJEV_ON_JEV_FAILURE=hold` the previous action is kept. |
+| Malformed or off-schema answer | Rejected, logged, and counted. |
+| Action not in the offered set | Rejected, never executed. |
+| Target disappears | Target reacquired or cleared, controls released. |
+| Minecraft disconnect | Bounded reconnect with exponential backoff, never on auth failures. |
+| Kick: whitelist, ban, or no permission | Treated as fatal, since retrying will not help; NanoJev exits with an error and a clear message. |
+| Kick: server full or restarting | Treated as a normal disconnect and retried with backoff. |
+| Respawn or world change | Observations and decisions are rebuilt from the new state. |
+| Unhandled exception, SIGINT, or SIGTERM | Graceful shutdown: stop the loop, release controls, disconnect. |
 
-NanoJev **never** silently substitutes a rule-based decision while claiming Jev made it. The
-fallback is explicit and configurable. Tests use a fake provider; the production app never does.
+NanoJev never quietly swaps in a rule-based decision and reports that Jev made it. The fallback is
+explicit and configurable. Tests use a fake provider; the production path never does.
 
 ## Logging and metrics
 
-Routine logs are concise; `NANOJEV_LOG_LEVEL=debug` adds detailed observation and decision traces.
-Logged: connection lifecycle, provider status, current target, compact observations, the offered
-action ids, the selected action, latency, probabilities/confidence, execution results, and every
-recovery event. Secrets are redacted.
+Routine logs stay short, and `NANOJEV_LOG_LEVEL=debug` adds detailed observation and decision
+traces. Logged: connection lifecycle, provider status, the current target, compact observations,
+the offered action ids, the selected action, latency, probabilities and confidence, execution
+results, and every recovery event. Secrets are redacted.
 
-Metrics include decision count, failures, timeouts, stale responses, median and p95 latency, and
+Metrics cover decision count, failures, timeouts, stale responses, median and p95 latency, and
 throughput, printed every 30 seconds.
 
 ## Tests
@@ -373,61 +367,63 @@ npm run typecheck # tsc --noEmit
 npm run bench     # tick-loop micro-benchmark (dev tool)
 ```
 
-Tests cover configuration validation, observation construction, angle normalization, target
-acquisition/loss, legal action generation, Jev request construction, typed response parsing,
-rejection of un-offered actions, mocked Mineflayer execution, stale-response rejection, timeouts
-and outages, and disconnect/shutdown cleanup. They use a fake bot and a scripted provider and
-require **neither** a paid API call nor a live server. The live provider is exercised against a
-mocked `fetch` so the real SDK wire format and error classes are tested.
+The suite covers configuration validation, observation construction, angle normalization, target
+acquisition and loss, legal action generation, Jev request construction, typed response parsing,
+rejection of actions that were not offered, mocked Mineflayer execution, stale-response rejection,
+timeouts and outages, and disconnect and shutdown cleanup. It uses a fake bot and a scripted
+provider, so it needs neither a paid API call nor a live server. The live provider is tested against
+a mocked `fetch`, which covers the real SDK wire format and error classes.
 
 ### Benchmarks
 
-`npm run bench` measures the per-tick CPU cost of the hot-path pieces (observation sampling with
-cold/warm caches, legal-action building, the state signatures, action execution, and aim math) and
-prints each as a share of the tick budget. It touches no network or server and exists to catch
-performance regressions. It typically reports well under 1% of the tick budget for NanoJev's own
-code — the rest is Mineflayer and network I/O.
+`npm run bench` measures the per-tick CPU cost of the hot-path pieces: observation sampling with
+cold and warm caches, legal-action building, the state signatures, action execution, and aim math.
+Each is printed as a share of the tick budget. It touches no network and no server, and exists to
+catch regressions. In practice NanoJev's own code is well under one percent of the tick budget; the
+rest is Mineflayer and network I/O.
 
 ## Supported Minecraft versions
 
-Mineflayer `4.39.0` supports Minecraft **1.8.8 through the latest tested version** (currently
-1.21.x / the newest release). `MC_VERSION=auto` detects the version from the server ping; pin a
-specific version only if you need to. NanoJev reports the server version in its startup log.
+Mineflayer `4.39.0` supports Minecraft `1.8.8` through the latest tested version, currently the
+newest 1.21.x release. `MC_VERSION=auto` reads the version from the server ping, and you only need
+to pin a version if auto-detection fails. The startup log reports the version that was detected.
 
 ## Limitations
 
-- **Attack cooldown is approximate.** Mineflayer does not expose the protocol attack cooldown, so
-  NanoJev uses a configurable interval (`NANOJEV_ATTACK_INTERVAL_MS`, default 625 ms). It is
-  documented as an estimate, never as an exact game mechanic.
-- **Line of sight is a raycast estimate**, not a server-authoritative check.
-- **Technique timing is tick-quantised (50 ms).** W-taps and similar techniques cannot be timed
-  below one server tick, and the server decides whether they actually register.
-- **Damage is never predicted.** Descriptions avoid inventing damage or hit probabilities.
-- Whole-model quality is the quality of the chosen backend/model; evaluate on your own server.
-- Running a large OpenJev model locally needs the GPU/Docker setup described in the OpenJev README;
-  otherwise use Codiv or TypeSafe's hosted Jev.
+- The attack cooldown is an estimate. Mineflayer does not expose the protocol cooldown, so NanoJev
+  uses a configurable interval (`NANOJEV_ATTACK_INTERVAL_MS`, 625 ms by default). It is never
+  treated as an exact game value.
+- Line of sight is a raycast estimate, not a server-authoritative check.
+- Technique timing is quantised to the 50 ms server tick. W-taps and the other techniques cannot be
+  timed below that, and the server decides whether they register at all.
+- Damage is never predicted. Descriptions avoid inventing damage numbers or hit probabilities.
+- The quality of the decisions is the quality of the chosen backend and model. Test it on your own
+  server before trusting it.
+- Running a large OpenJev model locally needs the GPU or Docker setup from the OpenJev README. Codiv
+  and TypeSafe's hosted Jev avoid that entirely.
 
 ## Troubleshooting
 
-**The bot will not start: "TYPESAFE_API_KEY is required" / "OPENJEV_API_KEY is required"**
+**The bot will not start: "TYPESAFE_API_KEY is required" or "OPENJEV_API_KEY is required"**
 Run `nanojev setup`, or set the matching key in `.env`, or switch to the local OpenJev backend.
 
 **"OpenJev not reachable at http://127.0.0.1:8080"**
 Start it with `run-openjev.bat` (or `nanojev openjev --execute`) and wait for the model to load
-(`curl http://127.0.0.1:8080/v1/models`). Or switch to `codiv` / `typesafe`.
+(`curl http://127.0.0.1:8080/v1/models`). Or switch to `codiv` or `typesafe`.
 
-**Connection times out or the bot is kicked**
-Set the address as `MC_ADDRESS=play.example.net:25617` (or `MC_HOST`/`MC_PORT` separately). For premium
-accounts use `MC_AUTH=microsoft` and complete the device-code sign-in. NanoJev retries normal
-disconnects with backoff and stops retrying on authentication failures or a whitelist/ban kick.
+**Connection times out, or the bot is kicked**
+Set the address as `MC_ADDRESS=play.example.net:25617`, or set `MC_HOST` and `MC_PORT` separately.
+For premium accounts use `MC_AUTH=microsoft` and complete the device-code sign-in. NanoJev retries
+normal disconnects with backoff and stops retrying on authentication failures or a whitelist or ban
+kick.
 
 **"Server version ... is not supported"**
 Pin a tested version with `MC_VERSION`, or update Mineflayer.
 
-**Decisions are slow / timeout**
-The model may be under-provisioned or the network slow. Watch the logged latency; raise
-`NANOJEV_DECISION_TIMEOUT_MS`, or run a smaller OpenJev model (Laya/Verdict run on CPU).
+**Decisions are slow or timing out**
+The model may be under-provisioned or the network slow. Check the logged latency, raise
+`NANOJEV_DECISION_TIMEOUT_MS`, or run a smaller OpenJev model (Laya and Verdict run on CPU).
 
-**Bot acts for a moment after the model fails**
-The default `NANOJEV_ON_JEV_FAILURE=halt` releases controls and waits; `hold` intentionally keeps
-the previous action. Use `halt` unless you have a reason not to.
+**The bot keeps acting for a moment after the model fails**
+The default `NANOJEV_ON_JEV_FAILURE=halt` releases the controls and waits. `hold` deliberately keeps
+the previous action, so switch to `halt` unless you want that.
