@@ -17,6 +17,7 @@ export interface FakeBotCalls {
   deactivated: number;
   quit: string[];
   raycasts: number;
+  blockAt: number;
 }
 
 export interface FakeTargetSpec {
@@ -95,6 +96,7 @@ export function createFakeBot(options: FakeBotOptions = {}): FakeBot {
     deactivated: 0,
     quit: [],
     raycasts: 0,
+    blockAt: 0,
   };
 
   const position = new Vec3(...(options.position ?? [0, 0, 0]));
@@ -190,6 +192,7 @@ export function createFakeBot(options: FakeBotOptions = {}): FakeBot {
       /* no-op */
     },
     blockAt(point) {
+      calls.blockAt += 1;
       const solid = options.solidAt ? options.solidAt(Math.floor(point.x), Math.floor(point.y), Math.floor(point.z)) : false;
       return (solid ? STONE : AIR) as unknown as Block;
     },

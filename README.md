@@ -133,7 +133,8 @@ Key settings (see `.env.example` for the full list):
 | `MC_TARGET_RANGE` | Acquisition range, blocks | `32` |
 | `NANOJEV_LOOP_HZ` | Observation/execution tick rate | `20` |
 | `NANOJEV_DECISION_MIN_INTERVAL_MS` | Minimum gap between decision requests | `250` |
-| `NANOJEV_ATTACK_INTERVAL_MS` | Attack cooldown approximation (see limitations) | `625` |
+| `NANOJEV_ATTACK_INTERVAL_MS` | Attack cooldown approximation, floored at one tick (50 ms) | `625` |
+| `NANOJEV_ATTACK_RANGE` | Melee reach in blocks, hard-capped at vanilla (3) | `3` |
 | `NANOJEV_WTAP_ENABLED` | Offer a W-tap (sprint reset) as a selectable action | `true` |
 | `NANOJEV_WTAP_RELEASE_TICKS` | Ticks to hold the W-tap release phase (1 tick = 50 ms) | `2` |
 | `NANOJEV_ON_JEV_FAILURE` | `halt` (default) or `hold` | `halt` |
@@ -265,6 +266,28 @@ like the attack cooldown.
 
 Movement controls are released when an action ends, the target disappears, the bot disconnects,
 or NanoJev shuts down. Conflicting action routines cannot drive the bot at the same time.
+
+## Vanilla-only behaviour
+
+NanoJev is designed so every action is achievable by a **stock Minecraft Java client** — no
+client-side cheats or modifications:
+
+- **Inputs only.** The bot drives Mineflayer through ordinary client inputs: movement control
+  states (`forward`/`back`/`left`/`right`/`jump`/`sprint`/`sneak`), look, attack, and use-item.
+  It never writes packets, sets position/velocity, teleports, or tunes client physics.
+- **No reach extension.** Attack range is hard-capped at the vanilla melee reach of **3.0 blocks**
+  (`VANILLA_ATTACK_REACH`), the executor clamps it again defensively, and `NANOJEV_ATTACK_RANGE`
+  cannot be configured higher.
+- **No speed or attack-rate cheats.** Movement is normal sprinting (the server remains
+  authoritative); the attack interval is floored at one server tick (50 ms), and the bot sends at
+  most one attack per tick.
+- **Tick-aligned techniques.** W-taps and similar timing cannot go below one server tick (50 ms).
+- The server is authoritative throughout: Mineflayer only proposes movement, and the server
+  accepts or corrects it like any client.
+
+A regression test (`test/vanilla.test.ts`) asserts the reach/interval caps and scans the
+bot-behaviour modules for cheat-only APIs (`_client`, raw packet sends, `physicsEnabled`,
+teleport/position writes).
 
 ## Coordinates and rotation conventions
 

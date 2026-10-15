@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { VANILLA_ATTACK_INTERVAL_MIN_MS, VANILLA_ATTACK_REACH } from "./vanilla.js";
 
 function boolFromEnv(defaultValue: boolean) {
   return z
@@ -188,8 +189,8 @@ export const configSchema = z
       loopHz: numberFromEnv(20, { min: 1, max: 50 }),
       decisionMinIntervalMs: numberFromEnv(250, { int: true, min: 0 }),
       decisionTimeoutMs: numberFromEnv(3_000, { int: true, min: 100 }),
-      attackIntervalMs: numberFromEnv(625, { int: true, min: 0 }),
-      attackRange: numberFromEnv(3, { min: 0.5, max: 8 }),
+      attackIntervalMs: numberFromEnv(625, { int: true, min: VANILLA_ATTACK_INTERVAL_MIN_MS }),
+      attackRange: numberFromEnv(VANILLA_ATTACK_REACH, { min: 0.5, max: VANILLA_ATTACK_REACH }),
       strafeRange: numberFromEnv(6, { min: 0.5, max: 16 }),
       retreatHealthFraction: numberFromEnv(0.5, { min: 0, max: 1 }),
       materialDistanceBucket: numberFromEnv(1, { min: 0.1, max: 16 }),

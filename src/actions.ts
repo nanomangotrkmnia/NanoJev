@@ -138,3 +138,27 @@ export function observationSignature(obs: Observation, config: Config): string {
     obs.environment.openDirectionCount,
   ].join("|");
 }
+
+/**
+ * A compact key that captures everything `buildLegalActions` branches on. Callers recompute the
+ * legal action list only when this key changes, avoiding repeated string building and Set
+ * allocation on every tick while the bot's tactical situation is unchanged.
+ */
+export function legalActionsSignature(obs: Observation, config: Config): string {
+  const target = obs.target;
+  if (!target || !target.valid || !target.alive || !target.inRange || target.visible === false) return "none";
+  const melee = target.distance <= config.combat.attackRange;
+  const close = target.distance <= config.combat.strafeRange;
+  const lowHealth = obs.self.health / 20 <= config.combat.retreatHealthFraction;
+  return [
+    target.id,
+    melee ? "m" : "f",
+    close ? "c" : "x",
+    obs.self.attackReady ? "r" : "-",
+    obs.self.onGround ? "g" : "-",
+    obs.self.shieldAvailable ? "s" : "-",
+    obs.environment.openDirectionCount > 0 ? "o" : "b",
+    lowHealth ? "l" : "-",
+    config.combat.wtapEnabled ? "w" : "-",
+  ].join("|");
+}

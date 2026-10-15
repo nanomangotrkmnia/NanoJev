@@ -3,6 +3,9 @@ import type { Config } from "./config.js";
 import type { BotLike } from "./minecraft/bot.js";
 import { distance } from "./minecraft/math.js";
 
+/** When no eligible target is found, wait this long before scanning the entity list again. */
+const EMPTY_SCAN_TTL_MS = 200;
+
 export interface TargetSelectorOptions {
   mode: "explicit" | "nearest";
   username?: string;
@@ -12,6 +15,7 @@ export interface TargetSelectorOptions {
 export class TargetSelector {
   private readonly options: TargetSelectorOptions;
   private current: Entity | null = null;
+  private emptyUntil = 0;
 
   constructor(options: TargetSelectorOptions) {
     this.options = options;
@@ -31,15 +35,16 @@ export class TargetSelector {
 
   reset(): void {
     this.current = null;
+    this.emptyUntil = 0;
   }
 
-  select(bot: BotLike): Entity | null {
+  select(bot: BotLike, now: number = Date.now()): Entity | null {
     if (this.options.mode === "explicit") {
       const entity = this.resolveExplicit(bot);
       this.current = entity;
       return entity;
     }
-    return this.selectNearest(bot);
+    return this.selectNearest(bot, now);
   }
 
   private resolveExplicit(bot: BotLike): Entity | null {
@@ -54,32 +59,37 @@ export class TargetSelector {
     return byName ?? null;
   }
 
-  private selectNearest(bot: BotLike): Entity | null {
-    if (this.current && this.isEligible(bot, this.current)) return this.current;
+  private selectNearest(bot: BotLike, now: number): Entity | null {
+    const current = this.current;
+    if (current && this.isEligible(bot, current)) return current;
+    if (!current && now < this.emptyUntil) return null;
 
+    const botPosition = bot.entity.position;
     let best: Entity | null = null;
     let bestDistance = Number.POSITIVE_INFINITY;
     for (const entity of Object.values(bot.entities ?? {})) {
       if (!entity || entity.type !== "player") continue;
-      if (!this.isEligible(bot, entity)) continue;
-      const dist = distance(entity.position, bot.entity.position);
-      if (dist < bestDistance) {
-        best = entity;
-        bestDistance = dist;
-      }
+      const dist = distance(entity.position, botPosition);
+      if (dist >= bestDistance) continue;
+      if (!this.isEligible(bot, entity, { distance: dist })) continue;
+      best = entity;
+      bestDistance = dist;
     }
+
     this.current = best;
+    this.emptyUntil = best ? 0 : now + EMPTY_SCAN_TTL_MS;
     return best;
   }
 
-  private isEligible(bot: BotLike, entity: Entity, opts: { requireUsername?: boolean } = {}): boolean {
+  private isEligible(bot: BotLike, entity: Entity, opts: { requireUsername?: boolean; distance?: number } = {}): boolean {
     if (entity.isValid === false) return false;
     if (entity.id === bot.entity.id) return false;
     if (entity.type !== "player") return false;
     if (this.options.username && opts.requireUsername && entity.username !== this.options.username) return false;
     if (entity.username !== undefined && entity.username === bot.username) return false;
     if (typeof entity.health === "number" && entity.health <= 0) return false;
-    if (distance(entity.position, bot.entity.position) > this.options.range) return false;
+    const dist = opts.distance ?? distance(entity.position, bot.entity.position);
+    if (dist > this.options.range) return false;
     return true;
   }
 }

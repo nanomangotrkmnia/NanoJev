@@ -5,6 +5,7 @@ import type { Logger } from "../logger.js";
 import type { BotLike, ControlState } from "../minecraft/bot.js";
 import { clamp, pitchTo, yawTo } from "../minecraft/math.js";
 import type { CombatActionId } from "../state.js";
+import { VANILLA_ATTACK_REACH } from "../vanilla.js";
 import { eyePosition } from "../observation.js";
 
 const ALL_CONTROLS: ControlState[] = ["forward", "back", "left", "right", "jump", "sprint", "sneak"];
@@ -43,6 +44,7 @@ export class CombatExecutor {
   private readonly logger: Logger;
   private readonly attackRange: number;
   private readonly wtapReleaseTicks: number;
+  private readonly timelines: Record<CombatActionId, ExecPhase[]>;
   private shieldActive = false;
   private shieldItem: Item | null = null;
   private controls: ControlState[] = [];
@@ -52,8 +54,10 @@ export class CombatExecutor {
   constructor(bot: BotLike, config: Config, logger: Logger) {
     this.bot = bot;
     this.logger = logger;
-    this.attackRange = config.combat.attackRange;
+    // Never exceed normal melee reach, whatever the configuration says.
+    this.attackRange = Math.min(config.combat.attackRange, VANILLA_ATTACK_REACH);
     this.wtapReleaseTicks = Math.max(1, Math.round(config.combat.wtapReleaseTicks));
+    this.timelines = buildTimelines(this.wtapReleaseTicks);
   }
 
   get activeControls(): ControlState[] {
@@ -84,7 +88,7 @@ export class CombatExecutor {
       this.ticksInPhase = 0;
     }
 
-    const timeline = this.timeline(action);
+    const timeline = this.timelines[action];
     if (this.phaseIndex >= timeline.length) this.phaseIndex = timeline.length - 1;
     const phase = timeline[this.phaseIndex]!;
 
@@ -93,7 +97,7 @@ export class CombatExecutor {
 
     let attacked = false;
     if (phase.attack && attackReady && target && target.isValid !== false) {
-      if (target.position.distanceTo(this.bot.entity.position) <= this.attackRange + 0.5) {
+      if (target.position.distanceTo(this.bot.entity.position) <= this.attackRange) {
         this.bot.attack(target);
         attacked = true;
       }
@@ -105,30 +109,7 @@ export class CombatExecutor {
       this.ticksInPhase = 0;
     }
 
-    return { attacked, controls: desiredControls(phase.controls) };
-  }
-
-  private timeline(action: CombatActionId): ExecPhase[] {
-    switch (action) {
-      case "sprint_reset_attack":
-        // W-tap: stop moving/sprinting, hit, then re-engage a fresh sprint.
-        return [
-          { ticks: this.wtapReleaseTicks, controls: {}, attack: true },
-          { ticks: 1, controls: { ...CRUISE.sprint_reset_attack } },
-        ];
-      case "jump_attack":
-        return [
-          { ticks: 1, controls: { ...CRUISE.jump_attack, jump: true }, attack: true },
-          { ticks: 1, controls: { ...CRUISE.jump_attack } },
-        ];
-      case "attack_target":
-        return [
-          { ticks: 1, controls: {}, attack: true },
-          { ticks: 1, controls: {} },
-        ];
-      default:
-        return [{ ticks: 1, controls: { ...CRUISE[action] } }];
-    }
+    return { attacked, controls: this.controls };
   }
 
   private setControls(desired: Controls): void {
@@ -210,4 +191,25 @@ export class CombatExecutor {
 
 function desiredControls(desired: Controls): ControlState[] {
   return ALL_CONTROLS.filter((control) => desired[control] === true);
+}
+
+/** Precomputes every action timeline once, so the tick loop never allocates phases. */
+function buildTimelines(wtapReleaseTicks: number): Record<CombatActionId, ExecPhase[]> {
+  const timelines = {} as Record<CombatActionId, ExecPhase[]>;
+  for (const action of Object.keys(CRUISE) as CombatActionId[]) {
+    timelines[action] = [{ ticks: 1, controls: { ...CRUISE[action] } }];
+  }
+  timelines.attack_target = [
+    { ticks: 1, controls: {}, attack: true },
+    { ticks: 1, controls: {} },
+  ];
+  timelines.jump_attack = [
+    { ticks: 1, controls: { ...CRUISE.jump_attack, jump: true }, attack: true },
+    { ticks: 1, controls: { ...CRUISE.jump_attack } },
+  ];
+  timelines.sprint_reset_attack = [
+    { ticks: wtapReleaseTicks, controls: {}, attack: true },
+    { ticks: 1, controls: { ...CRUISE.sprint_reset_attack } },
+  ];
+  return timelines;
 }

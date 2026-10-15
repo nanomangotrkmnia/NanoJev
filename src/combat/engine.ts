@@ -3,8 +3,8 @@ import type { Config } from "../config.js";
 import type { Logger } from "../logger.js";
 import type { BotLike } from "../minecraft/bot.js";
 import { TargetSelector } from "../target.js";
-import { buildLegalActions, observationSignature } from "../actions.js";
-import { sampleObservation } from "../observation.js";
+import { buildLegalActions, legalActionsSignature, observationSignature } from "../actions.js";
+import { sampleObservation, type ObservationCache } from "../observation.js";
 import { JevError, type CombatActionId, type DecisionResult, type LegalAction, type Observation, type TargetState } from "../state.js";
 import { buildCombatState, buildDecisionChoice, toDecisionResult } from "../jev/decision.js";
 import type { JevProvider } from "../jev/provider.js";
@@ -61,6 +61,8 @@ export class CombatEngine {
   private decisionSignature: string | null = null;
   private lastObservation: Observation | null = null;
   private lastLegalActions: LegalAction[] = [];
+  private observationCache: ObservationCache = {};
+  private legalCache: { key: string; actions: LegalAction[] } | null = null;
 
   constructor(deps: CombatEngineDeps) {
     this.bot = deps.bot;
@@ -110,6 +112,8 @@ export class CombatEngine {
     this.decisionSignature = null;
     this.lastObservation = null;
     this.lastLegalActions = [];
+    this.observationCache = {};
+    this.legalCache = null;
     this.backoffMs = 0;
     this.lastAttackAtMs = Number.NEGATIVE_INFINITY;
     this.logger.debug("combat state reset", { reason });
@@ -151,14 +155,19 @@ export class CombatEngine {
     this.tickCount += 1;
     const now = this.now();
     const attackReady = now - this.lastAttackAtMs >= this.config.combat.attackIntervalMs;
-    const targetEntity = this.selector.select(this.bot);
+    const targetEntity = this.selector.select(this.bot, now);
 
-    const observation = await sampleObservation(this.bot, this.config, {
-      tick: this.tickCount,
-      now,
-      attackReady,
-      target: targetEntity,
-    });
+    const observation = await sampleObservation(
+      this.bot,
+      this.config,
+      {
+        tick: this.tickCount,
+        now,
+        attackReady,
+        target: targetEntity,
+      },
+      this.observationCache,
+    );
     this.lastObservation = observation;
 
     if (targetEntity) {
@@ -169,7 +178,12 @@ export class CombatEngine {
       }
     }
 
-    const legalActions = buildLegalActions(observation, this.config);
+    const legalKey = legalActionsSignature(observation, this.config);
+    let legalActions = this.legalCache?.key === legalKey ? this.legalCache.actions : null;
+    if (!legalActions) {
+      legalActions = buildLegalActions(observation, this.config);
+      this.legalCache = { key: legalKey, actions: legalActions };
+    }
     this.lastLegalActions = legalActions;
 
     if (!observation.target) {

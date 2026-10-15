@@ -15,7 +15,7 @@ function buildConfig(overrides: Record<string, string> = {}) {
     env: {
       NANOJEV_DECISION_MIN_INTERVAL_MS: "0",
       NANOJEV_DECISION_TIMEOUT_MS: "150",
-      NANOJEV_ATTACK_INTERVAL_MS: "0",
+      NANOJEV_ATTACK_INTERVAL_MS: "50",
       MC_TARGET_MODE: "nearest",
       ...overrides,
     },
