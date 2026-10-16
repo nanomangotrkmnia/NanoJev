@@ -6,6 +6,7 @@ const minecraft = { address: "play.example.net:25566", username: "NanoJev", auth
 describe("planSetupEnv", () => {
   it("writes TypeSafe settings for the typesafe backend", () => {
     const env = planSetupEnv({
+      mode: "production",
       backend: "typesafe",
       typesafeApiKey: "sk-typesafe",
       typesafeModel: "jev-latest",
@@ -14,6 +15,7 @@ describe("planSetupEnv", () => {
       openjevBaseUrl: "http://127.0.0.1:8080",
       minecraft,
     });
+    expect(env.NANOJEV_MODE).toBe("production");
     expect(env.NANOJEV_JEV_BACKEND).toBe("typesafe");
     expect(env.TYPESAFE_API_KEY).toBe("sk-typesafe");
     expect(env.MC_ADDRESS).toBe("play.example.net:25566");
@@ -23,6 +25,7 @@ describe("planSetupEnv", () => {
 
   it("writes local OpenJev settings for the openjev backend", () => {
     const env = planSetupEnv({
+      mode: "production",
       backend: "openjev",
       openjevHosted: false,
       openjevBaseUrl: "http://127.0.0.1:8080",
@@ -37,6 +40,7 @@ describe("planSetupEnv", () => {
 
   it("writes Codiv settings and forces hosted=true for the codiv backend", () => {
     const env = planSetupEnv({
+      mode: "development",
       backend: "codiv",
       openjevHosted: true,
       openjevBaseUrl: "https://api.codiv.ai",
@@ -44,6 +48,7 @@ describe("planSetupEnv", () => {
       openjevApiKey: "sk-codiv-abc",
       minecraft,
     });
+    expect(env.NANOJEV_MODE).toBe("development");
     expect(env.NANOJEV_JEV_BACKEND).toBe("codiv");
     expect(env.OPENJEV_HOSTED).toBe("true");
     expect(env.OPENJEV_BASE_URL).toBe("https://api.codiv.ai");

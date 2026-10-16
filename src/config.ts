@@ -105,8 +105,18 @@ export type JevBackend = (typeof JEV_BACKENDS)[number];
 export const CODIV_BASE_URL = "https://api.codiv.ai";
 export const LOCAL_OPENJEV_BASE_URL = "http://127.0.0.1:8080";
 
+export const RUN_MODES = ["production", "development"] as const;
+export type RunMode = (typeof RUN_MODES)[number];
+
 export const configSchema = z
   .object({
+    mode: z
+      .union([z.enum(RUN_MODES), z.string(), z.undefined()])
+      .transform((value) => (value ?? "production").toLowerCase())
+      .refine((value): value is RunMode => (RUN_MODES as readonly string[]).includes(value), {
+        message: `NANOJEV_MODE must be one of ${RUN_MODES.join(", ")}`,
+      }),
+
     logLevel: z
       .union([z.enum(["debug", "info", "warn", "error"]), z.string()])
       .optional()
@@ -225,6 +235,7 @@ export function loadConfig(options: LoadOptions = {}): Config {
   const env = options.env ?? process.env;
 
   const raw = {
+    mode: env.NANOJEV_MODE,
     logLevel: env.NANOJEV_LOG_LEVEL ?? env.LOG_LEVEL,
     minecraft: {
       address: env.MC_ADDRESS ?? env.MC_SERVER,
@@ -381,6 +392,11 @@ export function assertRunnable(config: Config): RunValidatedConfig {
 
 export function useOpenJev(config: Config): boolean {
   return config.jev.backend !== "typesafe";
+}
+
+/** True when NanoJev runs in development mode, which unlocks the test/dev tooling. */
+export function isDev(config: Config): boolean {
+  return config.mode === "development";
 }
 
 export function isCodiv(config: Config): boolean {

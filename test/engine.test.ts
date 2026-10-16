@@ -245,6 +245,37 @@ describe("CombatEngine per-tick reflexes", () => {
   });
 });
 
+describe("CombatEngine forced action (dev)", () => {
+  it("runs the forced action instead of asking the model", async () => {
+    const fake = createFakeBot({ target: { username: "Steve", position: [2, 0, 0] } });
+    const scripted = scriptedProvider(async () => choiceAnswer("hold_position"));
+    const { engine } = makeEngine(fake, scripted);
+
+    engine.forceAction("strafe_left");
+    await engine.tick();
+    await engine.settle();
+
+    expect(engine.snapshot().currentAction).toBe("strafe_left");
+    expect(engine.forced).toBe("strafe_left");
+    expect(scripted.calls).toBe(0);
+  });
+
+  it("hands control back to the model when cleared", async () => {
+    const fake = createFakeBot({ target: { username: "Steve", position: [2, 0, 0] } });
+    const scripted = scriptedProvider(async () => choiceAnswer("hold_position"));
+    const { engine } = makeEngine(fake, scripted);
+
+    engine.forceAction("strafe_left");
+    engine.forceAction(null);
+    await engine.tick();
+    await engine.settle();
+
+    expect(engine.forced).toBeNull();
+    expect(engine.snapshot().currentAction).toBe("hold_position");
+    expect(scripted.calls).toBe(1);
+  });
+});
+
 describe("CombatEngine validation and staleness", () => {
   it("drops an action that was not offered instead of treating it as fatal", async () => {
     const fake = createFakeBot({ target: { username: "Steve", position: [2, 0, 0] } });

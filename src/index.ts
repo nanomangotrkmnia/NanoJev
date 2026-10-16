@@ -1,6 +1,6 @@
 import "dotenv/config";
 import mineflayer from "mineflayer";
-import { assertRunnable, loadConfig, type Config } from "./config.js";
+import { assertRunnable, isDev, loadConfig, type Config } from "./config.js";
 import { createLogger, type Logger } from "./logger.js";
 import { MinecraftConnection } from "./minecraft/connection.js";
 import { createJevProvider, describeProvider } from "./jev/factory.js";
@@ -10,6 +10,7 @@ import { CombatEngine } from "./combat/engine.js";
 import { runSetup } from "./cli/setup.js";
 import { runSettings } from "./cli/settings.js";
 import { printModelCatalog, runCodivInfo, runOpenJev } from "./cli/openjev-run.js";
+import { startDevConsole } from "./cli/dev-console.js";
 
 const HELP = `NanoJev - autonomous Minecraft PvP bot driven by Jev / OpenJev decisions
 
@@ -35,6 +36,7 @@ function supportedVersionNote(version: string): string {
 
 function printStartupReport(config: Config, logger: Logger, providerDescription: string): void {
   logger.info("NanoJev starting", {
+    mode: config.mode,
     server: `${config.minecraft.host}:${config.minecraft.port}`,
     username: config.minecraft.username,
     auth: config.minecraft.auth,
@@ -158,6 +160,14 @@ export async function runBot(): Promise<void> {
     }
   }, 30_000);
   if (typeof metricsTimer.unref === "function") metricsTimer.unref();
+
+  if (isDev(config)) {
+    startDevConsole({
+      getEngine: () => currentEngine,
+      logger,
+      shutdown: (reason) => shutdown(reason),
+    });
+  }
 
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));

@@ -31,7 +31,9 @@ if not exist "dist\index.js" (
 
 if not exist ".env" (
   echo.
-  echo First run detected: choosing a decision backend and Minecraft settings.
+  echo First run detected.
+  echo You will choose a run mode ^(production or development^), a decision backend,
+  echo and the Minecraft connection.
   echo.
   node dist\index.js setup
   if errorlevel 1 (

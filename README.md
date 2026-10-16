@@ -116,6 +116,7 @@ Common settings:
 
 | Variable | Meaning | Default |
 |---|---|---|
+| `NANOJEV_MODE` | `production` or `development` (dev unlocks the console and extra diagnostics) | `production` |
 | `NANOJEV_JEV_BACKEND` | `typesafe`, `openjev`, or `codiv` | `typesafe` |
 | `TYPESAFE_API_KEY` | TypeSafe API key (hosted Jev) | — |
 | `OPENJEV_BASE_URL` | OpenJev server root | `http://127.0.0.1:8080` |
@@ -172,6 +173,30 @@ address, username, target, timing, and techniques without running full setup aga
 model, server, username, auth, target) and an advanced menu (OpenJev endpoint, targeting,
 connection and reconnect, decision timing, loop and attack tuning, techniques, log level), and
 writes whatever you change back to `.env`.
+
+## Development mode
+
+`nanojev setup` asks how you want to run NanoJev on the first run (and `NANOJEV_MODE` sets it
+afterwards):
+
+- `production` (default) — normal play; the dev tooling is not wired up.
+- `development` — unlocks the test tooling used to develop and tune the bot. From a terminal you get
+  an interactive **dev console** on stdin: type a command and press Enter.
+
+  | Command | Effect |
+  |---|---|
+  | `help` | list the commands |
+  | `status` | current action, forced action, target, distance, decision state |
+  | `metrics` | decision count, ok/failures/timeouts/stale, latency |
+  | `force <action>` | run one action every tick, bypassing the model (for example `force strafe_left`) |
+  | `auto` | clear the forced action and hand control back to the model |
+  | `stop` / `start` | pause and resume the combat loop |
+  | `quit` | shut the bot down |
+
+  Forcing an action is the quickest way to exercise a single move — a W-tap, a strafe, a hitselect —
+  without waiting on the model. More dev/test features belong behind this mode.
+
+Switch modes any time by setting `NANOJEV_MODE=development` in `.env` or through `nanojev settings`.
 
 On startup NanoJev prints one line with the server, bot username, auth mode, Minecraft version
 support, target mode, loop settings, and the decision provider (model and endpoint, never the key).

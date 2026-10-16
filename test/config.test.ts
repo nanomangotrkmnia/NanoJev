@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigError, assertRunnable, getConfigStatus, loadConfig, parseHostPort } from "../src/config.js";
+import { ConfigError, assertRunnable, getConfigStatus, isDev, loadConfig, parseHostPort } from "../src/config.js";
 
 describe("parseHostPort", () => {
   it("parses host:port, [ipv6]:port, bare host and bare IPv6", () => {
@@ -8,6 +8,24 @@ describe("parseHostPort", () => {
     expect(parseHostPort("[::1]:25565")).toEqual({ host: "::1", port: 25565 });
     expect(parseHostPort("::1")).toEqual({ host: "::1" });
     expect(parseHostPort("")).toEqual({ host: "" });
+  });
+});
+
+describe("run mode", () => {
+  it("defaults to production", () => {
+    const config = loadConfig({ env: {} });
+    expect(config.mode).toBe("production");
+    expect(isDev(config)).toBe(false);
+  });
+
+  it("reads development from NANOJEV_MODE", () => {
+    const config = loadConfig({ env: { NANOJEV_MODE: "development" } });
+    expect(config.mode).toBe("development");
+    expect(isDev(config)).toBe(true);
+  });
+
+  it("rejects an unknown mode", () => {
+    expect(() => loadConfig({ env: { NANOJEV_MODE: "staging" } })).toThrow(ConfigError);
   });
 });
 

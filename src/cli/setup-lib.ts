@@ -5,6 +5,7 @@ import { probeOpenJev } from "../openjev/server.js";
 import { TypesafeJevProvider } from "../jev/typesafe-provider.js";
 
 export interface SetupAnswers {
+  mode: "production" | "development";
   backend: "typesafe" | "openjev" | "codiv";
   typesafeApiKey?: string;
   typesafeBaseUrl?: string;
@@ -25,6 +26,7 @@ export interface SetupAnswers {
 export function planSetupEnv(answers: SetupAnswers): Record<string, string> {
   const parsed = parseHostPort(answers.minecraft.address);
   const updates: Record<string, string> = {
+    NANOJEV_MODE: answers.mode,
     NANOJEV_JEV_BACKEND: answers.backend,
     MC_ADDRESS: answers.minecraft.address,
     MC_HOST: parsed.host || "localhost",

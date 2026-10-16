@@ -1,18 +1,21 @@
-export type CombatActionId =
-  | "approach"
-  | "close_distance_sprinting"
-  | "strafe_left"
-  | "strafe_right"
-  | "retreat"
-  | "hold_position"
-  | "track_target"
-  | "attack_target"
-  | "jump_attack"
-  | "sprint_reset_attack"
-  | "hitselect"
-  | "jump_reset"
-  | "raise_shield"
-  | "reposition";
+export const COMBAT_ACTION_IDS = [
+  "approach",
+  "close_distance_sprinting",
+  "strafe_left",
+  "strafe_right",
+  "retreat",
+  "hold_position",
+  "track_target",
+  "attack_target",
+  "jump_attack",
+  "sprint_reset_attack",
+  "hitselect",
+  "jump_reset",
+  "raise_shield",
+  "reposition",
+] as const;
+
+export type CombatActionId = (typeof COMBAT_ACTION_IDS)[number];
 
 export interface Vec3State {
   x: number;

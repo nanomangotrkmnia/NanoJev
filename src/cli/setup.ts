@@ -43,6 +43,19 @@ export async function runSetup(options: SetupOptions = {}): Promise<number> {
       }
     }
 
+    const mode = await prompter.choose<"production" | "development">("How will you run NanoJev?", [
+      {
+        label: "Production",
+        value: "production",
+        detail: "Normal play. Development/test features are off.",
+      },
+      {
+        label: "Development",
+        value: "development",
+        detail: "Unlocks the dev/test tooling: in-console control commands and extra diagnostics.",
+      },
+    ]);
+
     const backend = await prompter.choose<"typesafe" | "openjev" | "codiv">(
       "Which decision backend should NanoJev use?",
       [
@@ -69,6 +82,7 @@ export async function runSetup(options: SetupOptions = {}): Promise<number> {
       const apiKey = await prompter.ask("Paste your TYPESAFE_API_KEY");
       const model = await prompter.ask("Jev model", "jev-latest");
       answers = planSetupEnv({
+        mode,
         backend: "typesafe",
         typesafeApiKey: apiKey,
         typesafeModel: model,
@@ -84,6 +98,7 @@ export async function runSetup(options: SetupOptions = {}): Promise<number> {
         "Choose the OpenJev model to use on Codiv (hosted; no local hardware needed)",
       );
       answers = planSetupEnv({
+        mode,
         backend: "codiv",
         openjevHosted: true,
         openjevBaseUrl: "https://api.codiv.ai",
@@ -109,6 +124,7 @@ export async function runSetup(options: SetupOptions = {}): Promise<number> {
       }
 
       answers = planSetupEnv({
+        mode,
         backend: "openjev",
         openjevHosted: false,
         openjevBaseUrl: baseUrl,

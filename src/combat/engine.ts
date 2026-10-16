@@ -66,6 +66,7 @@ export class CombatEngine {
   private stopped = false;
   private tickCount = 0;
   private generation = 0;
+  private forcedAction: CombatActionId | null = null;
 
   private lastAttackAtMs = Number.NEGATIVE_INFINITY;
   private lastDecisionRequestMs = Number.NEGATIVE_INFINITY;
@@ -97,6 +98,18 @@ export class CombatEngine {
 
   get running(): boolean {
     return !this.stopped;
+  }
+
+  /**
+   * Development override: pin the action the bot runs until cleared, so a dev can exercise one move
+   * by hand. Pass `null` to hand control back to the model. Never used on the production path.
+   */
+  forceAction(action: CombatActionId | null): void {
+    this.forcedAction = action;
+  }
+
+  get forced(): CombatActionId | null {
+    return this.forcedAction;
   }
 
   start(): void {
@@ -205,6 +218,13 @@ export class CombatEngine {
       this.legalCache = { key: legalKey, actions: legalActions };
     }
     this.lastLegalActions = legalActions;
+
+    // Development override: run one action on every tick, bypassing the model. Dev console only.
+    if (this.forcedAction) {
+      if (this.currentAction !== this.forcedAction) this.setAction(this.forcedAction, null);
+      await this.executeCurrent(targetEntity);
+      return;
+    }
 
     if (!observation.target) {
       this.abandon("target lost");

@@ -6,6 +6,7 @@ import { createPrompter, isInteractive, type Prompter } from "./prompt.js";
 
 /** Every setting the editor knows about, with the same defaults the app uses when a key is absent. */
 export const DEFAULT_SETTINGS: Record<string, string> = {
+  NANOJEV_MODE: "production",
   NANOJEV_JEV_BACKEND: "typesafe",
   TYPESAFE_API_KEY: "",
   TYPESAFE_BASE_URL: "",
@@ -209,6 +210,7 @@ async function advancedMenu(prompter: Prompter, settings: Record<string, string>
     { label: "Decision timing and failure policy", value: "decision" as const },
     { label: "Loop and attack tuning", value: "combat" as const },
     { label: "Techniques (W-tap, hitselect, jump reset)", value: "techniques" as const },
+    { label: `Run mode (now ${settings.NANOJEV_MODE})`, value: "mode" as const },
     { label: "Log level", value: "log" as const },
     { label: "Back", value: "back" as const },
   ]);
@@ -252,6 +254,9 @@ async function advancedMenu(prompter: Prompter, settings: Record<string, string>
       settings.NANOJEV_HITSELECT_ENABLED = await askBool(prompter, "Offer hitselect (delayed crit)?", settings.NANOJEV_HITSELECT_ENABLED);
       settings.NANOJEV_HITSELECT_TICKS = await askNumber(prompter, "Hitselect hold, ticks (1-3)", settings.NANOJEV_HITSELECT_TICKS);
       settings.NANOJEV_JUMP_RESET_ENABLED = await askBool(prompter, "Offer jump reset?", settings.NANOJEV_JUMP_RESET_ENABLED);
+      return;
+    case "mode":
+      settings.NANOJEV_MODE = await askEnum(prompter, "Run mode (development unlocks the dev console)", ["production", "development"], settings.NANOJEV_MODE);
       return;
     case "log":
       settings.NANOJEV_LOG_LEVEL = await askEnum(prompter, "Log level", ["debug", "info", "warn", "error"], settings.NANOJEV_LOG_LEVEL);
