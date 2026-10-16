@@ -138,6 +138,9 @@ Common settings:
 | `NANOJEV_HITSELECT_ENABLED` | Offer hitselect (hold the hit, then jump-crit) | `true` |
 | `NANOJEV_HITSELECT_TICKS` | Ticks to hold the hit before the crit (1–3) | `2` |
 | `NANOJEV_JUMP_RESET_ENABLED` | Offer jump reset (jump on the hit's tick to cut knockback) | `true` |
+| `NANOJEV_REFLEX_ATTACK` | Swing the moment the attack is off cooldown, whatever the LLM chose | `true` |
+| `NANOJEV_FALLBACK_ACTION` | Act on the obvious move until the first decision lands | `true` |
+| `NANOJEV_KNOCKBACK_WINDOW_MS` | Keep momentum/aim across the server's rubber-band for this long after a hit (`0` disables) | `350` |
 | `NANOJEV_ON_JEV_FAILURE` | `halt` or `hold` | `halt` |
 | `NANOJEV_LOG_LEVEL` | `debug`, `info`, `warn`, `error` | `info` |
 
@@ -227,6 +230,22 @@ Decision requests go out on their own asynchronous path, one at a time, spaced b
 `NANOJEV_DECISION_MIN_INTERVAL_MS` and backed off exponentially after failures. Logging and metrics
 run on a slow timer. A slow model therefore cannot stall movement or attacks.
 
+The design follows the per-tick controllers used by dedicated combat bots: the bot acts on **every**
+tick and never blocks on the model. Two things make that work when the model is an LLM that answers
+in seconds rather than in one tick:
+
+- **Reflex attack.** A stock client swings the instant its attack is off cooldown. NanoJev does the
+  same (`NANOJEV_REFLEX_ATTACK`): if the target is in reach and the cooldown is up, it swings,
+  whatever action the model last selected. The model therefore chooses *positioning, spacing, and
+  technique*, not whether to hit — so attacks land at the cooldown rate instead of the decision
+  rate. The only exception is a technique that deliberately times the swing (hitselect).
+- **Movement reflex.** The bot never stands still: every tick it closes the gap when the target is
+  out of reach, circles (strafes) when in range, and backs off when it is hurt — independently of
+  the model (`NANOJEV_FALLBACK_ACTION`). It also jumps to climb to a target on a block above or to
+  get over a step blocking the approach. When the model picks its own movement action (approach,
+  strafe, retreat, reposition) that takes precedence; the reflex only fills the movement in when the
+  model chose something stationary (attack, hold, track) or has not answered yet.
+
 Only one decision is ever in flight. A reply is thrown away as stale if the target changed, if the
 observation changed in a way that matters (distance, health, range state, attack readiness, open
 directions), or if the chosen action is no longer legal. While the next decision is pending, the
@@ -234,7 +253,8 @@ bot keeps using its current valid action. If only one action is possible, no dec
 at all.
 
 A 24 ms decision interval would work out to about 42 requests a second. That number is not a claim
-NanoJev makes: network inference can take much longer. NanoJev measures and reports the real
+NanoJev makes: network inference can take much longer. The reflex and fallback layers mean the
+request rate does not bound the attack rate; NanoJev still measures and reports the real decision
 latency (median and p95), the timeout count, and the decision throughput instead of assuming one.
 
 ## Combat actions
@@ -255,6 +275,9 @@ The rules that decide what gets offered live in code:
   `NANOJEV_HITSELECT_ENABLED`, or `NANOJEV_JUMP_RESET_ENABLED`.
 - Movement actions are left out when the space next to the bot is blocked.
 - `raise_shield` only appears when the bot actually has a shield.
+- Movement and technique actions do not hold back the swing: while the attack is off cooldown the bot
+  swings on its own (`NANOJEV_REFLEX_ATTACK`). `hitselect` is the exception, since holding the swing
+  is its entire point.
 - Every option carries a description of what it does, when it is valid, and what it costs.
 
 ### W-tap (sprint reset)
@@ -306,17 +329,23 @@ cheats or modifications:
   `entity_velocity` packet carries blocks per tick, but Mineflayer still scales it by the older
   1/8000 fixed-point factor, shrinking real knockback to nothing. `src/minecraft/knockback.ts`
   copies the packet's value onto the entity so the bot is knocked back exactly as a stock client
-  would be. The same helper keeps that momentum across position packets that do not actually move
-  the bot: some servers and anti-cheats re-send the player's current position every tick, and
-  Mineflayer treats each as a teleport and zeroes the velocity, which otherwise cancels a knockback
-  before the next physics tick. It reads the packets, sends nothing, and never invents motion.
+  would be.
+- The same helper keeps that momentum and the bot's aim across the server's position re-syncs. Some
+  servers and anti-cheats re-send the player's position every tick (and, mid-knockback, rubber-band
+  the bot back toward where it was); Mineflayer treats each as a teleport and zeroes the velocity
+  and overwrites the rotation, which cancels the knockback and drags the aim off the target. For a
+  short window after a hit (`NANOJEV_KNOCKBACK_WINDOW_MS`, and always for a packet that does not
+  actually move the bot) it keeps the momentum and aim, matching what a stock client sees because
+  those corrections are never sent to one. A genuinely larger correction is still a teleport and is
+  obeyed. It reads the packets, sends nothing, and never invents motion. Set the window to `0` to
+  turn this off and let the server's corrections win.
 - Attack range is capped at the vanilla melee reach of 3.0 blocks (`VANILLA_ATTACK_REACH`). The
   executor clamps it again as a second guard, and `NANOJEV_ATTACK_RANGE` cannot be set higher.
-- Movement is ordinary sprinting, and the server stays authoritative. The attack interval cannot
-  go below one server tick (50 ms), and the bot sends at most one attack per tick.
+- Movement is ordinary sprinting. The attack interval cannot go below one server tick (50 ms), and
+  the bot sends at most one attack per tick.
 - Techniques cannot be timed below a single server tick.
-- The server is authoritative throughout. Mineflayer only proposes movement, and the server accepts
-  or corrects it exactly as it would for any other client.
+- Apart from the knockback window above, the server is authoritative throughout. Mineflayer only
+  proposes movement, and the server accepts or corrects it exactly as it would for any other client.
 
 A regression test (`test/vanilla.test.ts`) checks the reach and interval caps and scans the
 bot-behaviour modules for cheat-only APIs (`physicsEnabled`, raw packet sends, teleport or position
@@ -347,8 +376,8 @@ exposes it and `unavailable` otherwise. Line of sight is `estimated` from a worl
 | Jev/OpenJev auth error | New combat actions stop; the bot does not act on model output. |
 | Request timeout | Decision discarded, controls released, bounded exponential backoff. |
 | Service outage or 5xx | Same as a timeout, except with `NANOJEV_ON_JEV_FAILURE=hold` the previous action is kept. |
-| Malformed or off-schema answer | Rejected, logged, and counted. |
-| Action not in the offered set | Rejected, never executed. |
+| Malformed or off-schema answer | Rejected, logged, and counted; with the default `halt` the chosen action is dropped. |
+| Action not in the offered set (for example an attack now on cooldown) | Dropped as stale, not fatal; the current action and the reflex continue. |
 | Target disappears | Target reacquired or cleared, controls released. |
 | Minecraft disconnect | Bounded reconnect with exponential backoff, never on auth failures. |
 | Kick: whitelist, ban, or no permission | Treated as fatal, since retrying will not help; NanoJev exits with an error and a clear message. |
@@ -356,8 +385,10 @@ exposes it and `unavailable` otherwise. Line of sight is `estimated` from a worl
 | Respawn or world change | Observations and decisions are rebuilt from the new state. |
 | Unhandled exception, SIGINT, or SIGTERM | Graceful shutdown: stop the loop, release controls, disconnect. |
 
-NanoJev never quietly swaps in a rule-based decision and reports that Jev made it. The fallback is
-explicit and configurable. Tests use a fake provider; the production path never does.
+NanoJev never quietly swaps in a rule-based decision and reports that Jev made it. The reflex swing
+and the pre-decision fallback are local, explicit, and configurable (`NANOJEV_REFLEX_ATTACK`,
+`NANOJEV_FALLBACK_ACTION`), and are logged as their own thing, distinct from a model decision. Tests
+use a fake provider; the production path never does.
 
 ## Logging and metrics
 

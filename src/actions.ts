@@ -22,7 +22,7 @@ export const ACTION_DESCRIPTIONS: Record<CombatActionId, Descriptor> = {
   retreat: (obs) =>
     `Move directly away from the target to open space and reset the fight ` +
     `(self health ${obs.self.health}/20, target ~${obs.target?.distance ?? "?"} blocks). ` +
-    `Trades map control for safety; does not attack while backing off.`,
+    `Trades map control for safety; the bot still swings if the target stays in reach.`,
   hold_position: () =>
     `Stand still and make no movement input. Preserves position and stamina, and keeps the bot ready ` +
     `to react, but concedes initiative and map pressure.`,
@@ -31,7 +31,7 @@ export const ACTION_DESCRIPTIONS: Record<CombatActionId, Descriptor> = {
     `but yields no positional advantage this interval.`,
   attack_target: (obs) =>
     `Face and swing at the target now (in range at ~${obs.target?.distance ?? "?"} blocks and the attack is off cooldown). ` +
-    `The only action that deals damage; leaves the bot stationary and briefly committed to the swing. ` +
+    `Commits the interval to the swing and leaves the bot stationary; use it to stop and hit rather than chase. ` +
     `Damage output is not predicted here.`,
   jump_attack: (obs) =>
     `Jump while swinging at the target (in range at ~${obs.target?.distance ?? "?"} blocks, grounded, attack off cooldown). ` +

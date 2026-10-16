@@ -3,10 +3,11 @@
  *
  * NanoJev only drives the bot through ordinary client inputs (movement control states, look,
  * attack, use-item); it never writes packets or drives the bot with position/velocity writes. (The
- * sole exception is copying the server's own knockback velocity, which Mineflayer mis-scales on
- * 1.21.9+; see `minecraft/knockback.ts`.) These constants additionally cap the *decision* values so
- * the bot never attempts anything a vanilla client could not, e.g. attacking outside normal melee
- * reach or swinging faster than one server tick.
+ * one exception is `minecraft/knockback.ts`, which restores the knockback velocity Mineflayer
+ * mis-scales on 1.21.9+ and keeps the momentum and aim across the server's position re-syncs, so the
+ * bot behaves like a stock client.) These constants additionally cap the *decision* values so the
+ * bot never attempts anything a vanilla client could not, e.g. attacking outside normal melee reach
+ * or swinging faster than one server tick.
  */
 export const VANILLA_ATTACK_REACH = 3.0;
 export const VANILLA_ATTACK_INTERVAL_MIN_MS = 50;

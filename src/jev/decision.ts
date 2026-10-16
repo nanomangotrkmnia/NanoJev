@@ -48,6 +48,10 @@ export function buildCombatState(obs: Observation, legalActions: LegalAction[]):
       visibility: obs.sources.visibility,
       attackReady: "estimated from a configurable attack interval, not read from the protocol",
       distances: "approximate block distance",
+      swings:
+        "the bot swings by itself the instant its attack is off cooldown and the target is in reach, " +
+        "whatever action is chosen, so use the action to choose positioning, spacing, and technique " +
+        "rather than whether to attack; only timing techniques (hitselect) hold the swing",
     },
     legal_actions: legalActions.map((action) => action.id),
   };
@@ -82,8 +86,11 @@ export function parseChoiceAnswer(answer: unknown, legalActions: LegalAction[]):
 
   const offered = new Set<string>(legalActions.map((action) => action.id));
   if (!offered.has(parsed.data.choice)) {
+    // Not offered *now* (e.g. an attack that went on cooldown while the answer was in flight). This
+    // is a stale/misaligned pick, not a malformed answer, so the caller should drop it and keep the
+    // current action rather than treat it as a fatal error.
     throw new JevError(
-      "invalid",
+      "stale",
       `Jev selected "${parsed.data.choice}", which was not among the offered actions (${[...offered].join(", ")})`,
     );
   }

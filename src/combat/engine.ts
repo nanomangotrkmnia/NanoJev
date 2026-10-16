@@ -10,8 +10,26 @@ import { buildCombatState, buildDecisionChoice, toDecisionResult } from "../jev/
 import type { JevProvider } from "../jev/provider.js";
 import type { CombatExecutor } from "./executor.js";
 import { DecisionMetrics, type DecisionOutcome, type MetricsSnapshot } from "./metrics.js";
+import { VANILLA_ATTACK_REACH } from "../vanilla.js";
 
 const MAX_BACKOFF_MS = 30_000;
+
+/** Actions whose whole point is to time a swing themselves, so the reflex must not swing. */
+const REFLEX_ATTACK_BLOCKED = new Set<CombatActionId>(["hitselect", "raise_shield"]);
+
+/** Actions that already pick the movement, so the movement reflex must not add its own. */
+const MOVEMENT_ACTIONS = new Set<CombatActionId>([
+  "approach",
+  "close_distance_sprinting",
+  "strafe_left",
+  "strafe_right",
+  "retreat",
+  "reposition",
+]);
+
+/** Blocks the bot climbs by jumping; anything taller needs real pathfinding. */
+const CLIMB_JUMP_MAX_RISE = 1.6;
+const CLIMB_JUMP_MAX_DISTANCE = 4;
 
 export interface CombatEngineDeps {
   bot: BotLike;
@@ -41,6 +59,7 @@ export class CombatEngine {
   private readonly executor: CombatExecutor;
   private readonly metrics: DecisionMetrics;
   private readonly now: () => number;
+  private readonly attackRange: number;
 
   private timer: NodeJS.Timeout | null = null;
   private ticking = false;
@@ -73,6 +92,7 @@ export class CombatEngine {
     this.executor = deps.executor;
     this.metrics = deps.metrics ?? new DecisionMetrics();
     this.now = deps.now ?? Date.now;
+    this.attackRange = Math.min(this.config.combat.attackRange, VANILLA_ATTACK_REACH);
   }
 
   get running(): boolean {
@@ -208,9 +228,70 @@ export class CombatEngine {
       this.dispatchDecision(observation, legalActions, observation.target.id, signature, now);
     }
 
+    // Act every tick like a per-tick controller rather than waiting on the decision.
     if (this.currentAction) {
       await this.executeCurrent(targetEntity);
     }
+
+    // If there is no chosen action yet, swing on the reflex so the bot fights from the first tick
+    // instead of standing still for the seconds the model takes to answer.
+    if (this.currentAction === null && this.config.combat.reflexAttack && this.tryReflexAttack(null, targetEntity, attackReady)) {
+      this.lastAttackAtMs = this.now();
+    }
+
+    // Movement is a per-tick reflex too, so the bot is never a sitting duck: it keeps its distance
+    // and circles while the model thinks, whether or not a decision has landed. The model's own
+    // movement actions (approach, strafes, retreat) take precedence when it picks one.
+    if (!this.currentAction || !MOVEMENT_ACTIONS.has(this.currentAction)) {
+      this.applyMovementReflex(observation);
+    }
+    this.applyClimbJump(observation);
+  }
+
+  /**
+   * The move the bot makes on its own: back off when hurt, close the gap when out of reach, and
+   * otherwise circle the target. It never stands still while an enemy is in sight.
+   */
+  private applyMovementReflex(observation: Observation): void {
+    if (!this.config.combat.fallbackAction) return;
+    const target = observation.target;
+    if (!target || observation.environment.openDirectionCount < 1) return;
+
+    if (target.distance > this.attackRange) {
+      this.bot.setControlState("forward", true);
+      if (target.distance > this.config.combat.strafeRange) this.bot.setControlState("sprint", true);
+      return;
+    }
+    if (
+      observation.self.health / 20 <= this.config.combat.retreatHealthFraction &&
+      observation.environment.openDirectionCount >= 1
+    ) {
+      this.bot.setControlState("back", true);
+      return;
+    }
+    // Alternate the circle direction every ~half second so the bot keeps its angle changing.
+    this.bot.setControlState(Math.floor(this.tickCount / 10) % 2 === 0 ? "left" : "right", true);
+  }
+
+  /**
+   * Jump reflex for terrain: hop when the target is on a block above the bot, or when a step is
+   * blocking the approach, so the bot can climb a hill or a single block to reach the player.
+   */
+  private applyClimbJump(observation: Observation): void {
+    const target = observation.target;
+    if (!target) return;
+    const entity = this.bot.entity;
+
+    // Hold jump while the target is above or a step is blocking the way. The physics only actually
+    // leaves the ground when the bot is grounded, so a held jump becomes a hop up each block the
+    // bot reaches rather than a single mistimed jump. (Do not gate on `entity.onGround`: the
+    // server's per-tick position syncs keep clobbering it to false.)
+    const rise = target.position.y - entity.position.y;
+    const blocked =
+      (entity as unknown as { isCollidedHorizontally?: boolean }).isCollidedHorizontally === true;
+    const wantsClimb = rise > 0.5 && rise <= CLIMB_JUMP_MAX_RISE && target.distance <= CLIMB_JUMP_MAX_DISTANCE;
+    const stuckAgainstStep = blocked && target.distance > this.attackRange;
+    if (wantsClimb || stuckAgainstStep) this.bot.setControlState("jump", true);
   }
 
   private setAction(action: CombatActionId, decision: DecisionResult | null): void {
@@ -222,12 +303,37 @@ export class CombatEngine {
   private async executeCurrent(target: Entity | null): Promise<void> {
     if (!this.currentAction) return;
     const isNew = this.currentActionIsNew;
-    const attackReady = this.now() - this.lastAttackAtMs >= this.config.combat.attackIntervalMs;
-    const result = await this.executor.applyAction(this.currentAction, target, isNew, attackReady);
     this.currentActionIsNew = false;
-    if (result.attacked) {
+    await this.executeAction(this.currentAction, target, isNew);
+  }
+
+  private async executeAction(action: CombatActionId, target: Entity | null, isNew: boolean): Promise<void> {
+    const attackReady = this.now() - this.lastAttackAtMs >= this.config.combat.attackIntervalMs;
+    const result = await this.executor.applyAction(action, target, isNew, attackReady);
+
+    let attacked = result.attacked;
+    // Reflex: a vanilla client swings the moment the cooldown is up, no matter what it is doing.
+    // Without this the bot only ever swings on the tick an action timeline says so, so attacks wait
+    // on the (slow) decision cadence. Technique actions that time their own swing keep control.
+    if (!attacked && this.config.combat.reflexAttack && this.tryReflexAttack(action, target, attackReady)) {
+      attacked = true;
+      this.logger.debug("reflex attack", { action });
+    }
+    if (attacked) {
       this.lastAttackAtMs = this.now();
-      this.logger.debug("attacked target", { action: this.currentAction });
+      this.logger.debug("attacked target", { action });
+    }
+  }
+
+  private tryReflexAttack(action: CombatActionId | null, target: Entity | null, attackReady: boolean): boolean {
+    if (!attackReady || !target || target.isValid === false) return false;
+    if (action && REFLEX_ATTACK_BLOCKED.has(action)) return false;
+    if (target.position.distanceTo(this.bot.entity.position) > this.attackRange) return false;
+    try {
+      this.bot.attack(target);
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -340,8 +446,16 @@ export class CombatEngine {
         answeredAtMs: this.now(),
       });
     } catch (error) {
+      const jevError = error instanceof JevError ? error : new JevError("invalid", String(error));
+      if (jevError.kind === "stale") {
+        // The answer named an action that is no longer offered (e.g. an attack now on cooldown).
+        // Drop it and keep fighting on the current action / reflex instead of abandoning.
+        this.recordOutcome("stale", latencyMs);
+        this.logger.debug("ignored a no-longer-legal decision", { message: jevError.message });
+        return;
+      }
       this.recordOutcome("invalid", latencyMs);
-      this.onDecisionFailure(error instanceof JevError ? error : new JevError("invalid", String(error)));
+      this.onDecisionFailure(jevError);
       return;
     }
 

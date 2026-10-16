@@ -183,7 +183,7 @@ export class MinecraftConnection {
     (bot as unknown as BotLike).on("resourcePack", (...args: unknown[]) => this.answerResourcePack(bot, args));
 
     // Restore knockback on 1.21.9+, where Mineflayer mis-scales the server's velocity packet.
-    installKnockbackCompat(bot);
+    installKnockbackCompat(bot, this.config.combat.knockbackWindowMs);
 
     bot.on("respawn", () => {
       this.logger.info("bot respawned");

@@ -199,6 +199,9 @@ export const configSchema = z
       hitselectEnabled: boolFromEnv(true),
       hitselectTicks: numberFromEnv(2, { int: true, min: 1, max: 3 }),
       jumpResetEnabled: boolFromEnv(true),
+      reflexAttack: boolFromEnv(true),
+      fallbackAction: boolFromEnv(true),
+      knockbackWindowMs: numberFromEnv(350, { int: true, min: 0 }),
     }),
   });
 
@@ -273,6 +276,9 @@ export function loadConfig(options: LoadOptions = {}): Config {
       hitselectEnabled: env.NANOJEV_HITSELECT_ENABLED,
       hitselectTicks: env.NANOJEV_HITSELECT_TICKS,
       jumpResetEnabled: env.NANOJEV_JUMP_RESET_ENABLED,
+      reflexAttack: env.NANOJEV_REFLEX_ATTACK,
+      fallbackAction: env.NANOJEV_FALLBACK_ACTION,
+      knockbackWindowMs: env.NANOJEV_KNOCKBACK_WINDOW_MS,
     },
   };
 

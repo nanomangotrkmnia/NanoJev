@@ -56,13 +56,13 @@ describe("parseChoiceAnswer", () => {
     expect(parsed.probabilities.attack_target).toBe(0.8);
   });
 
-  it("rejects a choice that was not offered", () => {
+  it("drops a choice that was not offered as stale rather than malformed", () => {
     const answer = { type: "choice", choice: "teleport_away", probabilities: {}, confidence: 1 };
     expect(() => parseChoiceAnswer(answer, legal)).toThrow(JevError);
     try {
       parseChoiceAnswer(answer, legal);
     } catch (error) {
-      expect((error as JevError).kind).toBe("invalid");
+      expect((error as JevError).kind).toBe("stale");
     }
   });
 

@@ -46,6 +46,9 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   NANOJEV_HITSELECT_ENABLED: "true",
   NANOJEV_HITSELECT_TICKS: "2",
   NANOJEV_JUMP_RESET_ENABLED: "true",
+  NANOJEV_REFLEX_ATTACK: "true",
+  NANOJEV_FALLBACK_ACTION: "true",
+  NANOJEV_KNOCKBACK_WINDOW_MS: "350",
 };
 
 /** Parses `KEY=value` lines from a dotenv file, ignoring comments and blanks. */
@@ -239,6 +242,9 @@ async function advancedMenu(prompter: Prompter, settings: Record<string, string>
       settings.NANOJEV_ATTACK_INTERVAL_MS = await askNumber(prompter, "Attack interval, ms (min 50)", settings.NANOJEV_ATTACK_INTERVAL_MS);
       settings.NANOJEV_ATTACK_RANGE = await askNumber(prompter, "Attack range, blocks (max 3)", settings.NANOJEV_ATTACK_RANGE);
       settings.NANOJEV_STRAFE_RANGE = await askNumber(prompter, "Strafe range, blocks", settings.NANOJEV_STRAFE_RANGE);
+      settings.NANOJEV_REFLEX_ATTACK = await askBool(prompter, "Swing on cooldown regardless of the model?", settings.NANOJEV_REFLEX_ATTACK);
+      settings.NANOJEV_FALLBACK_ACTION = await askBool(prompter, "Act before the first decision lands?", settings.NANOJEV_FALLBACK_ACTION);
+      settings.NANOJEV_KNOCKBACK_WINDOW_MS = await askNumber(prompter, "Knockback window, ms (0 disables)", settings.NANOJEV_KNOCKBACK_WINDOW_MS);
       return;
     case "techniques":
       settings.NANOJEV_WTAP_ENABLED = await askBool(prompter, "Offer W-tap?", settings.NANOJEV_WTAP_ENABLED);

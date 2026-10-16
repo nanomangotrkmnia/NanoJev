@@ -22,7 +22,12 @@ function buildConfig(overrides: Record<string, string> = {}) {
   });
 }
 
-function makeEngine(fake: FakeBot, scripted: ScriptedProvider, overrides: Record<string, string> = {}) {
+function makeEngine(
+  fake: FakeBot,
+  scripted: ScriptedProvider,
+  overrides: Record<string, string> = {},
+  clock: { now: number } = { now: 1_000 },
+) {
   const config = buildConfig(overrides);
   const executor = new CombatExecutor(fake.bot, config, logger);
   const engine = new CombatEngine({
@@ -32,9 +37,9 @@ function makeEngine(fake: FakeBot, scripted: ScriptedProvider, overrides: Record
     provider: scripted.provider,
     selector: TargetSelector.fromConfig(config),
     executor,
-    now: () => 1_000,
+    now: () => clock.now,
   });
-  return { engine, config, executor };
+  return { engine, config, executor, clock };
 }
 
 function lastControlMap(fake: FakeBot): Record<string, boolean> {
@@ -118,8 +123,130 @@ describe("CombatEngine decision cycle", () => {
   });
 });
 
+describe("CombatEngine per-tick reflexes", () => {
+  it("acts before the first decision is in, instead of waiting seconds", async () => {
+    const fake = createFakeBot({ target: { username: "Steve", position: [2, 0, 0] } });
+    const gate = deferred<void>();
+    const scripted = scriptedProvider(async () => {
+      await gate.promise;
+      return choiceAnswer("hold_position");
+    });
+    const { engine } = makeEngine(fake, scripted);
+
+    await engine.tick();
+    expect(engine.snapshot().currentAction).toBeNull();
+    expect(fake.calls.attacks).toHaveLength(1);
+
+    gate.resolve();
+    await engine.settle();
+  });
+
+  it("swings on cooldown even while following a movement action", async () => {
+    const fake = createFakeBot({ target: { username: "Steve", position: [2, 0, 0] } });
+    const scripted = scriptedProvider(async () => choiceAnswer("strafe_left"));
+    const { engine, clock } = makeEngine(fake, scripted);
+
+    await engine.tick();
+    await engine.settle();
+    expect(engine.snapshot().currentAction).toBe("strafe_left");
+    expect(fake.calls.attacks).toHaveLength(1);
+
+    clock.now = 2_000; // past the 50ms attack interval
+    await engine.tick();
+    expect(fake.calls.attacks).toHaveLength(2);
+  });
+
+  it("does not swing again before the attack interval elapses", async () => {
+    const fake = createFakeBot({ target: { username: "Steve", position: [2, 0, 0] } });
+    const scripted = scriptedProvider(async () => choiceAnswer("strafe_left"));
+    const { engine } = makeEngine(fake, scripted);
+
+    await engine.tick();
+    await engine.settle();
+    await engine.tick();
+    expect(fake.calls.attacks).toHaveLength(1);
+  });
+
+  it("keeps moving even when the model picks a stationary action", async () => {
+    const fake = createFakeBot({ target: { username: "Steve", position: [5, 0, 0] } });
+    const scripted = scriptedProvider(async () => choiceAnswer("hold_position"));
+    const { engine } = makeEngine(fake, scripted);
+
+    await engine.tick();
+    await engine.settle();
+    expect(engine.snapshot().currentAction).toBe("hold_position");
+
+    await engine.tick();
+    // The model said stand still; the movement reflex still closes the gap.
+    expect(lastControlMap(fake).forward).toBe(true);
+  });
+
+  it("lets the model's own movement action win over the reflex", async () => {
+    const fake = createFakeBot({ target: { username: "Steve", position: [5, 0, 0] } });
+    const scripted = scriptedProvider(async () => choiceAnswer("retreat"));
+    const { engine } = makeEngine(fake, scripted);
+
+    await engine.tick();
+    await engine.settle();
+    expect(engine.snapshot().currentAction).toBe("retreat");
+
+    await engine.tick();
+    const controls = lastControlMap(fake);
+    expect(controls.back).toBe(true);
+    expect(controls.forward).not.toBe(true);
+  });
+
+  it("jumps to climb when the target is on a block above", async () => {
+    const fake = createFakeBot({ target: { username: "Steve", position: [2, 1, 0] } });
+    const gate = deferred<void>();
+    const scripted = scriptedProvider(async () => {
+      await gate.promise;
+      return choiceAnswer("hold_position");
+    });
+    const { engine } = makeEngine(fake, scripted);
+
+    await engine.tick();
+    expect(lastControlMap(fake).jump).toBe(true);
+
+    gate.resolve();
+    await engine.settle();
+  });
+
+  it("does not jump when the target is at the same level", async () => {
+    const fake = createFakeBot({ target: { username: "Steve", position: [5, 0, 0] } });
+    const gate = deferred<void>();
+    const scripted = scriptedProvider(async () => {
+      await gate.promise;
+      return choiceAnswer("hold_position");
+    });
+    const { engine } = makeEngine(fake, scripted);
+
+    await engine.tick();
+    expect(lastControlMap(fake).jump).not.toBe(true);
+
+    gate.resolve();
+    await engine.settle();
+  });
+
+  it("lets a timing technique hold the swing", async () => {
+    const fake = createFakeBot({ target: { username: "Steve", position: [2, 0, 0] } });
+    const scripted = scriptedProvider(async () => choiceAnswer("hitselect"));
+    const { engine, clock } = makeEngine(fake, scripted);
+
+    await engine.tick();
+    await engine.settle();
+    expect(engine.snapshot().currentAction).toBe("hitselect");
+    expect(fake.calls.attacks).toHaveLength(1);
+
+    clock.now = 2_000;
+    await engine.tick();
+    // Hitselect deliberately holds the swing, so the reflex must not fire.
+    expect(fake.calls.attacks).toHaveLength(1);
+  });
+});
+
 describe("CombatEngine validation and staleness", () => {
-  it("rejects an action that was not offered and releases controls", async () => {
+  it("drops an action that was not offered instead of treating it as fatal", async () => {
     const fake = createFakeBot({ target: { username: "Steve", position: [2, 0, 0] } });
     const scripted = scriptedProvider(async () => choiceAnswer("teleport_away"));
     const { engine } = makeEngine(fake, scripted);
@@ -127,9 +254,11 @@ describe("CombatEngine validation and staleness", () => {
     await engine.tick();
     await engine.settle();
 
+    // The pick is stale, not malformed: no action is adopted and nothing is recorded as ok.
+    const metrics = engine.snapshot().metrics;
     expect(engine.snapshot().currentAction).toBeNull();
-    expect(engine.snapshot().metrics.failures).toBeGreaterThanOrEqual(1);
-    expect(Object.values(lastControlMap(fake)).every((value) => value === false)).toBe(true);
+    expect(metrics.stale).toBeGreaterThanOrEqual(1);
+    expect(metrics.ok).toBe(0);
   });
 
   it("discards a decision whose target disappeared while it was in flight", async () => {

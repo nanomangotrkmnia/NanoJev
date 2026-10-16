@@ -10,8 +10,11 @@ interface Vec3Like {
 }
 
 interface EntityWithVelocity {
+  id?: number;
   position?: Vec3Like;
   velocity?: Vec3Like;
+  yaw?: number;
+  pitch?: number;
 }
 
 interface EntityVelocityPacket {
@@ -25,6 +28,11 @@ interface RawClient {
 }
 
 const NO_OP_POSITION_EPSILON = 1e-3;
+/** A hit is the only thing that gives the bot upward motion; gravity and walking are downward. */
+const KNOCKBACK_UPWARD_MIN = 0.15;
+/** Only corrections below this size are ignored during the window; larger ones are real teleports. */
+const LAG_CORRECTION_MAX = 1.0;
+const DEFAULT_KNOCKBACK_WINDOW_MS = 350;
 
 /**
  * True when the server encodes entity velocity with the quantized `lpVec3` type.
@@ -51,20 +59,23 @@ export function usesLpVec3Velocity(version: string): boolean {
  *    in blocks per tick. Mineflayer still passes them through `fromNotchVelocity` (÷ 8000), so a
  *    knockback of, say, -0.39 becomes ~-0.00005 and the physics tick discards it as negligible.
  * 2. Servers (and anti-cheat plugins) that re-send the player's current position every tick make
- *    Mineflayer treat each packet as a teleport and zero the velocity, so a knockback applied this
- *    tick is wiped before the next physics tick. When such a packet does not actually move the
- *    entity it is a no-op sync, and the momentum should survive it.
+ *    Mineflayer treat each packet as a teleport: it zeroes the velocity and overwrites the yaw and
+ *    pitch. When such a packet does not actually move the entity it is a no-op sync, and the
+ *    momentum and the aim the bot just set should survive it instead of being clobbered by the
+ *    server's lagged echo.
  *
- * This only reads packets the server already sent and keeps the velocity they carry, exactly as a
+ * This only reads packets the server already sent and keeps the state they carry, exactly as a
  * stock client would. It sends nothing and never invents motion.
  */
-export function installKnockbackCompat(bot: Bot): void {
+export function installKnockbackCompat(bot: Bot, knockbackWindowMs = DEFAULT_KNOCKBACK_WINDOW_MS): void {
   const client = (bot as unknown as { _client?: RawClient })._client;
   if (!client || typeof client.on !== "function") return;
+  const windowMs = Math.max(0, knockbackWindowMs);
 
   const entity = (): EntityWithVelocity | undefined =>
     (bot as unknown as { entity?: EntityWithVelocity }).entity;
 
+  let knockbackUntilMs = 0;
   const onVelocityPacket = (raw: unknown): void => {
     const version = (bot as unknown as { version?: string }).version ?? "";
     if (!usesLpVec3Velocity(version)) return;
@@ -77,27 +88,47 @@ export function installKnockbackCompat(bot: Bot): void {
     if (!velocity || typeof velocity.set !== "function") return;
 
     velocity.set(packet.velocity.x, packet.velocity.y, packet.velocity.z);
+
+    const own = entity();
+    if (windowMs > 0 && own && packet.entityId === own.id && packet.velocity.y >= KNOCKBACK_UPWARD_MIN) {
+      knockbackUntilMs = Date.now() + windowMs;
+    }
   };
 
   // Mineflayer's `position` handler runs on the same event and zeroes velocity. Capture the
   // pre-handler state with a prepended listener, then restore it when the packet was a no-op.
   let prePosition: Vec3Like | null = null;
   let preVelocity: Vec3Like | null = null;
+  let preYaw: number | undefined;
+  let prePitch: number | undefined;
   const capturePosition = (): void => {
     const e = entity();
     if (!e?.position || !e?.velocity) return;
     prePosition = e.position.clone();
     preVelocity = e.velocity.clone();
+    preYaw = e.yaw;
+    prePitch = e.pitch;
   };
   const restoreVelocity = (): void => {
     const e = entity();
     if (e?.position && e.velocity && prePosition && preVelocity) {
-      if (e.position.distanceTo(prePosition) < NO_OP_POSITION_EPSILON) {
+      const delta = e.position.distanceTo(prePosition);
+      const noOp = delta < NO_OP_POSITION_EPSILON;
+      // Right after a knockback the server rubber-bands the bot back toward its pre-knock position,
+      // which zeroes the momentum it just gave. A stock client never sees those corrections, so for
+      // a brief window keep the momentum and aim across the small ones. Anything larger, or outside
+      // the window, is treated as a real teleport and left alone.
+      const lagDuringKnockback = !noOp && Date.now() < knockbackUntilMs && delta < LAG_CORRECTION_MAX;
+      if (noOp || lagDuringKnockback) {
         e.velocity.set(preVelocity.x, preVelocity.y, preVelocity.z);
+        if (preYaw !== undefined) e.yaw = preYaw;
+        if (prePitch !== undefined) e.pitch = prePitch;
       }
     }
     prePosition = null;
     preVelocity = null;
+    preYaw = undefined;
+    prePitch = undefined;
   };
 
   // Mineflayer injects its plugins (and their packet handlers) on a later tick, so handlers
