@@ -3,9 +3,7 @@
 NanoJev is a Minecraft Java Edition PvP bot. It joins a server through
 [Mineflayer](https://github.com/PrismarineJS/mineflayer), keeps track of itself, its target, and
 the nearby world, works out which combat moves are actually possible right now, and hands that
-short list to a System One decision model: TypeSafe's Jev, or the open-source OpenJev. The model
-picks one. What is legal, whether the answer is valid, and how the move is carried out are all
-decided in code.
+short list to a System One decision model: TypeSafe's Jev, or the open-source OpenJev. 
 
 ---
 
